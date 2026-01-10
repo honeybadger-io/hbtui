@@ -278,7 +278,7 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
 
     // Dashboard content
     if let Some(state) = &app.dashboard_state {
-        let grid = GridLayout::new(chunks[1]);
+        let grid = GridLayout::new_scaled(chunks[1], &state.widgets);
 
         for (widget, rect) in grid.layout_widgets(&state.widgets) {
             // Only render if widget has meaningful size

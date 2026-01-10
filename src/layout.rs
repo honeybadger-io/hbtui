@@ -7,39 +7,43 @@ use crate::dashboard::{GridPosition, WidgetRuntime};
 pub struct GridLayout {
     /// Terminal area available for the dashboard
     area: Rect,
-    /// Width of one grid column in terminal characters
-    col_width: u16,
-    /// Height of one grid row in terminal lines
-    row_height: u16,
+    /// Total grid columns (always 12)
+    grid_cols: u16,
+    /// Total grid rows needed
+    grid_rows: u16,
 }
 
 impl GridLayout {
-    pub fn new(area: Rect) -> Self {
-        // 12-column grid
-        let col_width = area.width / 12;
-        // Each grid row = 3 terminal lines
-        let row_height = 3;
+    /// Create a new grid layout that scales to fill the available area
+    pub fn new_scaled(area: Rect, widgets: &[WidgetRuntime]) -> Self {
+        // Find the max grid row needed (y + h)
+        let grid_rows = widgets
+            .iter()
+            .map(|w| w.widget.grid.y + w.widget.grid.h)
+            .max()
+            .unwrap_or(1);
 
         Self {
             area,
-            col_width,
-            row_height,
+            grid_cols: 12,
+            grid_rows,
         }
     }
 
-    /// Convert a grid position to a terminal Rect
+    /// Convert a grid position to a terminal Rect using proportional positioning
     pub fn grid_to_rect(&self, grid: &GridPosition) -> Rect {
-        let x = self.area.x + (grid.x * self.col_width);
-        let y = self.area.y + (grid.y * self.row_height);
-        let width = grid.w * self.col_width;
-        let height = grid.h * self.row_height;
+        // Calculate proportional positions to fill the entire area
+        let x = self.area.x + (grid.x as u32 * self.area.width as u32 / self.grid_cols as u32) as u16;
+        let y = self.area.y + (grid.y as u32 * self.area.height as u32 / self.grid_rows as u32) as u16;
 
-        // Clamp to area bounds
+        let x_end = self.area.x + ((grid.x + grid.w) as u32 * self.area.width as u32 / self.grid_cols as u32) as u16;
+        let y_end = self.area.y + ((grid.y + grid.h) as u32 * self.area.height as u32 / self.grid_rows as u32) as u16;
+
         Rect {
-            x: x.min(self.area.right()),
-            y: y.min(self.area.bottom()),
-            width: width.min(self.area.right().saturating_sub(x)),
-            height: height.min(self.area.bottom().saturating_sub(y)),
+            x,
+            y,
+            width: x_end.saturating_sub(x),
+            height: y_end.saturating_sub(y),
         }
     }
 

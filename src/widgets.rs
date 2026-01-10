@@ -1,7 +1,9 @@
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Bar, BarChart, BarGroup, Block, Borders, Cell, Paragraph, Row, Table},
+    symbols,
+    text::Span,
+    widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, GraphType, Paragraph, Row, Table},
     Frame,
 };
 
@@ -28,7 +30,7 @@ pub fn render_widget(f: &mut Frame, widget: &WidgetRuntime, area: Rect) {
 
             match view_type.as_str() {
                 "table" => render_table(f, block, response, area),
-                "line" => render_line_as_table(f, block, response, chart_config, area),
+                "line" => render_line_chart(f, block, response, chart_config, area),
                 "histogram" => render_histogram(f, block, response, chart_config, area),
                 _ => render_table(f, block, response, area),
             }
@@ -128,16 +130,97 @@ fn render_table(f: &mut Frame, block: Block, response: &InsightsResponse, area: 
     f.render_widget(table, area);
 }
 
-fn render_line_as_table(
+fn render_line_chart(
     f: &mut Frame,
     block: Block,
     response: &InsightsResponse,
-    _config: &ChartConfig,
+    config: &ChartConfig,
     area: Rect,
 ) {
-    // For TUI, render line charts as tables
-    // A future enhancement could use ratatui's Sparkline widget
-    render_table(f, block, response, area);
+    if response.results.is_empty() {
+        let empty = Paragraph::new("No data")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    let x_field = config.x_field.as_deref().unwrap_or("x");
+    let y_field = config.y_field.as_deref().unwrap_or("y");
+    let z_field = config.z_field.as_deref(); // grouping field
+
+    // Collect data points, grouped by z_field if present
+    let mut series: std::collections::HashMap<String, Vec<(f64, f64)>> = std::collections::HashMap::new();
+
+    for (i, row) in response.results.iter().enumerate() {
+        let x = i as f64; // Use index as x for simplicity
+        let y = row
+            .get(y_field)
+            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(0.0);
+
+        let group = z_field
+            .and_then(|zf| row.get(zf))
+            .map(|v| format_json_value(v))
+            .unwrap_or_else(|| y_field.to_string());
+
+        series.entry(group).or_default().push((x, y));
+    }
+
+    if series.is_empty() || series.values().all(|v| v.is_empty()) {
+        let empty = Paragraph::new("No data points")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block);
+        f.render_widget(empty, area);
+        return;
+    }
+
+    // Find bounds
+    let all_points: Vec<&(f64, f64)> = series.values().flat_map(|v| v.iter()).collect();
+    let x_min = all_points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
+    let x_max = all_points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
+    let y_min = 0.0; // Start from 0 for charts
+    let y_max = all_points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max) * 1.1;
+
+    // Colors for different series
+    let colors = [Color::Cyan, Color::Yellow, Color::Green, Color::Magenta, Color::Red];
+
+    // Sort series by name for stable ordering (prevents color flickering)
+    let mut sorted_series: Vec<_> = series.into_iter().collect();
+    sorted_series.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Create datasets
+    let datasets: Vec<Dataset> = sorted_series
+        .iter()
+        .enumerate()
+        .map(|(i, (name, points))| {
+            Dataset::default()
+                .name(name.clone())
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(colors[i % colors.len()]))
+                .data(points)
+        })
+        .collect();
+
+    let chart = Chart::new(datasets)
+        .block(block)
+        .x_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::Gray))
+                .bounds([x_min, x_max.max(x_min + 1.0)]),
+        )
+        .y_axis(
+            Axis::default()
+                .style(Style::default().fg(Color::Gray))
+                .bounds([y_min, y_max.max(1.0)])
+                .labels(vec![
+                    Span::raw(format!("{:.0}", y_min)),
+                    Span::raw(format!("{:.0}", y_max)),
+                ]),
+        );
+
+    f.render_widget(chart, area);
 }
 
 fn render_histogram(

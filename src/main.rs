@@ -22,7 +22,7 @@ mod widgets;
 
 use dashboard::{Dashboard, DashboardState, WidgetState};
 use honeybadger::{HoneybadgerClient, ProjectStats};
-use layout::GridLayout;
+use layout::{find_adjacent_widget, GridLayout, NavDirection};
 use widgets::render_widget;
 
 /// Message type for async widget updates
@@ -48,6 +48,8 @@ struct App {
     should_quit: bool,
     message_tx: mpsc::Sender<AppMessage>,
     message_rx: mpsc::Receiver<AppMessage>,
+    selected_widget_index: Option<usize>,
+    maximized_widget_index: Option<usize>,
 }
 
 impl App {
@@ -61,6 +63,8 @@ impl App {
             should_quit: false,
             message_tx: tx,
             message_rx: rx,
+            selected_widget_index: Some(0),
+            maximized_widget_index: None,
         }
     }
 
@@ -131,6 +135,17 @@ impl App {
             state.reset_all_to_loading();
         }
         self.fetch_all_widgets();
+    }
+
+    /// Navigate to an adjacent widget in the given direction
+    fn navigate_widget(&mut self, direction: NavDirection) {
+        if let (Some(state), Some(current_idx)) =
+            (&self.dashboard_state, self.selected_widget_index)
+        {
+            if let Some(new_idx) = find_adjacent_widget(&state.widgets, current_idx, direction) {
+                self.selected_widget_index = Some(new_idx);
+            }
+        }
     }
 }
 
@@ -231,6 +246,30 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.view_mode = ViewMode::Dashboard;
                         }
                     }
+                    // Arrow key navigation (only in dashboard view, not maximized)
+                    KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                        if app.view_mode == ViewMode::Dashboard && app.maximized_widget_index.is_none() {
+                            app.navigate_widget(match key.code {
+                                KeyCode::Up => NavDirection::Up,
+                                KeyCode::Down => NavDirection::Down,
+                                KeyCode::Left => NavDirection::Left,
+                                KeyCode::Right => NavDirection::Right,
+                                _ => unreachable!(),
+                            });
+                        }
+                    }
+                    // Enter to maximize selected widget
+                    KeyCode::Enter => {
+                        if app.view_mode == ViewMode::Dashboard && app.maximized_widget_index.is_none() {
+                            app.maximized_widget_index = app.selected_widget_index;
+                        }
+                    }
+                    // Escape to exit maximized view or deselect
+                    KeyCode::Esc => {
+                        if app.maximized_widget_index.is_some() {
+                            app.maximized_widget_index = None;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -260,12 +299,19 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    // Header with dashboard title
-    let title = app
-        .dashboard_state
-        .as_ref()
-        .map(|s| s.dashboard.title.as_str())
-        .unwrap_or("Dashboard");
+    // Header with dashboard title (or widget title if maximized)
+    let title = if let Some(max_idx) = app.maximized_widget_index {
+        app.dashboard_state
+            .as_ref()
+            .and_then(|s| s.widgets.get(max_idx))
+            .map(|w| w.widget.presentation.title.as_str())
+            .unwrap_or("Widget")
+    } else {
+        app.dashboard_state
+            .as_ref()
+            .map(|s| s.dashboard.title.as_str())
+            .unwrap_or("Dashboard")
+    };
 
     let header = Paragraph::new(title)
         .style(
@@ -278,12 +324,29 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
 
     // Dashboard content
     if let Some(state) = &app.dashboard_state {
-        let grid = GridLayout::new_scaled(chunks[1], &state.widgets);
+        // Check if we're in maximized view
+        if let Some(max_idx) = app.maximized_widget_index {
+            // Render only the maximized widget filling the content area
+            if let Some(widget) = state.widgets.get(max_idx) {
+                render_widget(f, widget, chunks[1], true);
+            }
+        } else {
+            // Normal grid view
+            let grid = GridLayout::new_scaled(chunks[1], &state.widgets);
 
-        for (widget, rect) in grid.layout_widgets(&state.widgets) {
-            // Only render if widget has meaningful size
-            if rect.width >= 4 && rect.height >= 2 {
-                render_widget(f, widget, rect);
+            for (idx, (widget, rect)) in grid.layout_widgets(&state.widgets).iter().enumerate() {
+                // Find the original index of this widget in the state
+                let original_idx = state
+                    .widgets
+                    .iter()
+                    .position(|w| w.widget.id == widget.widget.id)
+                    .unwrap_or(idx);
+                let is_selected = app.selected_widget_index == Some(original_idx);
+
+                // Only render if widget has meaningful size
+                if rect.width >= 4 && rect.height >= 2 {
+                    render_widget(f, widget, *rect, is_selected);
+                }
             }
         }
     } else {
@@ -293,7 +356,12 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer = Paragraph::new("'q' quit | 'r' refresh | 's' stats | 'd' dashboard")
+    let footer_text = if app.maximized_widget_index.is_some() {
+        "'q' quit | 'r' refresh | ESC back to grid"
+    } else {
+        "'q' quit | 'r' refresh | arrows navigate | Enter maximize"
+    };
+    let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::Gray))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);

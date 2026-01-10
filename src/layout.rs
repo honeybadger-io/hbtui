@@ -2,6 +2,15 @@ use ratatui::layout::Rect;
 
 use crate::dashboard::{GridPosition, WidgetRuntime};
 
+/// Direction for widget navigation
+#[derive(Debug, Clone, Copy)]
+pub enum NavDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 /// Grid layout system for positioning dashboard widgets.
 /// Uses a 12-column grid similar to Bootstrap/web dashboards.
 pub struct GridLayout {
@@ -66,4 +75,65 @@ impl GridLayout {
 
         positioned
     }
+}
+
+/// Find the best widget to navigate to from the current widget in the given direction
+pub fn find_adjacent_widget(
+    widgets: &[WidgetRuntime],
+    current_idx: usize,
+    direction: NavDirection,
+) -> Option<usize> {
+    if widgets.is_empty() || current_idx >= widgets.len() {
+        return None;
+    }
+
+    let current = &widgets[current_idx].widget.grid;
+    let current_center_x = current.x as f32 + current.w as f32 / 2.0;
+    let current_center_y = current.y as f32 + current.h as f32 / 2.0;
+
+    let mut best_idx: Option<usize> = None;
+    let mut best_score = f32::MAX;
+
+    for (idx, widget) in widgets.iter().enumerate() {
+        if idx == current_idx {
+            continue;
+        }
+
+        let grid = &widget.widget.grid;
+        let center_x = grid.x as f32 + grid.w as f32 / 2.0;
+        let center_y = grid.y as f32 + grid.h as f32 / 2.0;
+
+        // Check if this widget is in the right direction
+        let is_valid = match direction {
+            NavDirection::Up => center_y < current_center_y,
+            NavDirection::Down => center_y > current_center_y,
+            NavDirection::Left => center_x < current_center_x,
+            NavDirection::Right => center_x > current_center_x,
+        };
+
+        if !is_valid {
+            continue;
+        }
+
+        // Score based on distance in primary direction + penalty for perpendicular distance
+        let score = match direction {
+            NavDirection::Up | NavDirection::Down => {
+                let primary = (center_y - current_center_y).abs();
+                let perpendicular = (center_x - current_center_x).abs();
+                primary + perpendicular * 0.5
+            }
+            NavDirection::Left | NavDirection::Right => {
+                let primary = (center_x - current_center_x).abs();
+                let perpendicular = (center_y - current_center_y).abs();
+                primary + perpendicular * 0.5
+            }
+        };
+
+        if score < best_score {
+            best_score = score;
+            best_idx = Some(idx);
+        }
+    }
+
+    best_idx
 }

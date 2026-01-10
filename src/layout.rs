@@ -77,6 +77,11 @@ impl GridLayout {
     }
 }
 
+/// Check if two ranges overlap
+fn ranges_overlap(a_start: u16, a_end: u16, b_start: u16, b_end: u16) -> bool {
+    a_start < b_end && b_start < a_end
+}
+
 /// Find the best widget to navigate to from the current widget in the given direction
 pub fn find_adjacent_widget(
     widgets: &[WidgetRuntime],
@@ -93,6 +98,7 @@ pub fn find_adjacent_widget(
 
     let mut best_idx: Option<usize> = None;
     let mut best_score = f32::MAX;
+    let mut best_overlaps = false;
 
     for (idx, widget) in widgets.iter().enumerate() {
         if idx == current_idx {
@@ -115,6 +121,24 @@ pub fn find_adjacent_widget(
             continue;
         }
 
+        // Check if widgets overlap in the perpendicular dimension
+        // For left/right: check y-range overlap (same row)
+        // For up/down: check x-range overlap (same column)
+        let overlaps = match direction {
+            NavDirection::Left | NavDirection::Right => ranges_overlap(
+                current.y,
+                current.y + current.h,
+                grid.y,
+                grid.y + grid.h,
+            ),
+            NavDirection::Up | NavDirection::Down => ranges_overlap(
+                current.x,
+                current.x + current.w,
+                grid.x,
+                grid.x + grid.w,
+            ),
+        };
+
         // Score based on distance in primary direction + penalty for perpendicular distance
         let score = match direction {
             NavDirection::Up | NavDirection::Down => {
@@ -129,7 +153,14 @@ pub fn find_adjacent_widget(
             }
         };
 
-        if score < best_score {
+        // Prefer overlapping widgets; only consider non-overlapping if no overlapping found
+        if overlaps && !best_overlaps {
+            // First overlapping widget found, always take it
+            best_overlaps = true;
+            best_score = score;
+            best_idx = Some(idx);
+        } else if overlaps == best_overlaps && score < best_score {
+            // Same overlap status, pick better score
             best_score = score;
             best_idx = Some(idx);
         }

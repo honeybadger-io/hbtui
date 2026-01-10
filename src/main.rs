@@ -13,29 +13,124 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io;
+use tokio::sync::mpsc;
 
+mod dashboard;
 mod honeybadger;
+mod layout;
+mod widgets;
 
+use dashboard::{Dashboard, DashboardState, WidgetState};
 use honeybadger::{HoneybadgerClient, ProjectStats};
+use layout::GridLayout;
+use widgets::render_widget;
+
+/// Message type for async widget updates
+#[derive(Debug)]
+pub enum AppMessage {
+    WidgetLoaded {
+        widget_id: String,
+        result: Result<dashboard::InsightsResponse, String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ViewMode {
+    Stats,
+    Dashboard,
+}
 
 struct App {
     client: HoneybadgerClient,
     stats: Option<ProjectStats>,
+    dashboard_state: Option<DashboardState>,
+    view_mode: ViewMode,
     should_quit: bool,
+    message_tx: mpsc::Sender<AppMessage>,
+    message_rx: mpsc::Receiver<AppMessage>,
 }
 
 impl App {
     fn new(auth_token: String) -> Self {
+        let (tx, rx) = mpsc::channel(100);
         Self {
             client: HoneybadgerClient::new(auth_token),
             stats: None,
+            dashboard_state: None,
+            view_mode: ViewMode::Dashboard,
             should_quit: false,
+            message_tx: tx,
+            message_rx: rx,
         }
     }
 
     async fn load_data(&mut self) -> Result<()> {
         self.stats = Some(self.client.get_project_stats().await?);
         Ok(())
+    }
+
+    /// Load dashboard from a YAML file
+    fn load_dashboard(&mut self, path: &str, project_id: u64) -> Result<()> {
+        let content = std::fs::read_to_string(path)?;
+        let dashboard: Dashboard = serde_yaml::from_str(&content)?;
+        self.dashboard_state = Some(DashboardState::new(dashboard, project_id));
+        Ok(())
+    }
+
+    /// Spawn background tasks to fetch all widget data in parallel
+    fn fetch_all_widgets(&self) {
+        let Some(state) = &self.dashboard_state else {
+            return;
+        };
+
+        for widget_runtime in &state.widgets {
+            let client = self.client.clone();
+            let project_id = state.project_id;
+            let widget_id = widget_runtime.widget.id.clone();
+            let query = widget_runtime.widget.config.query.clone();
+            let tx = self.message_tx.clone();
+
+            tokio::spawn(async move {
+                // Check for empty query (often due to YAML indentation issues)
+                let result = if query.trim().is_empty() {
+                    Err("Empty query (check YAML indentation)".to_string())
+                } else {
+                    client
+                        .query_insights(project_id, &query)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+
+                let _ = tx
+                    .send(AppMessage::WidgetLoaded { widget_id, result })
+                    .await;
+            });
+        }
+    }
+
+    /// Process any pending messages from background tasks
+    fn process_messages(&mut self) {
+        while let Ok(msg) = self.message_rx.try_recv() {
+            match msg {
+                AppMessage::WidgetLoaded { widget_id, result } => {
+                    if let Some(state) = &mut self.dashboard_state {
+                        let widget_state = match result {
+                            Ok(response) => WidgetState::Loaded(response),
+                            Err(e) => WidgetState::Error(e),
+                        };
+                        state.update_widget(&widget_id, widget_state);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Refresh dashboard - reset all widgets to loading and refetch
+    fn refresh_dashboard(&mut self) {
+        if let Some(state) = &mut self.dashboard_state {
+            state.reset_all_to_loading();
+        }
+        self.fetch_all_widgets();
     }
 }
 
@@ -45,6 +140,16 @@ async fn main() -> Result<()> {
     let auth_token = std::env::var("HONEYBADGER_PERSONAL_AUTH_TOKEN")
         .expect("HONEYBADGER_PERSONAL_AUTH_TOKEN environment variable not set");
 
+    // Dashboard file path (default or from env)
+    let dashboard_path = std::env::var("HONEYBADGER_DASHBOARD")
+        .unwrap_or_else(|_| "rails_dashboard.yml".to_string());
+
+    // Project ID (default or from env)
+    let project_id: u64 = std::env::var("HONEYBADGER_PROJECT_ID")
+        .unwrap_or_else(|_| "121229".to_string())
+        .parse()
+        .expect("Invalid HONEYBADGER_PROJECT_ID");
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -52,10 +157,23 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app and load initial data
+    // Create app
     let mut app = App::new(auth_token);
-    if let Err(e) = app.load_data().await {
-        eprintln!("Failed to load data: {}", e);
+
+    // Load dashboard if file exists
+    if std::path::Path::new(&dashboard_path).exists() {
+        if let Err(e) = app.load_dashboard(&dashboard_path, project_id) {
+            eprintln!("Failed to load dashboard: {}", e);
+        } else {
+            // Start fetching widget data
+            app.fetch_all_widgets();
+        }
+    } else {
+        // Fall back to stats view if no dashboard
+        app.view_mode = ViewMode::Stats;
+        if let Err(e) = app.load_data().await {
+            eprintln!("Failed to load stats: {}", e);
+        }
     }
 
     // Run the app
@@ -82,6 +200,9 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> Result<()> {
     loop {
+        // Process any pending background task results
+        app.process_messages();
+
         terminal.draw(|f| ui(f, app))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
@@ -89,8 +210,25 @@ async fn run_app<B: ratatui::backend::Backend>(
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('r') => {
-                        if let Err(e) = app.load_data().await {
+                        if app.view_mode == ViewMode::Dashboard {
+                            app.refresh_dashboard();
+                        } else if let Err(e) = app.load_data().await {
                             eprintln!("Failed to reload data: {}", e);
+                        }
+                    }
+                    KeyCode::Char('s') => {
+                        if app.view_mode != ViewMode::Stats {
+                            app.view_mode = ViewMode::Stats;
+                            if app.stats.is_none() {
+                                if let Err(e) = app.load_data().await {
+                                    eprintln!("Failed to load stats: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if app.view_mode != ViewMode::Dashboard && app.dashboard_state.is_some() {
+                            app.view_mode = ViewMode::Dashboard;
                         }
                     }
                     _ => {}
@@ -105,6 +243,63 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn ui(f: &mut Frame, app: &App) {
+    match app.view_mode {
+        ViewMode::Stats => render_stats_view(f, app),
+        ViewMode::Dashboard => render_dashboard_view(f, app),
+    }
+}
+
+fn render_dashboard_view(f: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Min(10),   // Dashboard content
+            Constraint::Length(3), // Footer
+        ])
+        .split(f.area());
+
+    // Header with dashboard title
+    let title = app
+        .dashboard_state
+        .as_ref()
+        .map(|s| s.dashboard.title.as_str())
+        .unwrap_or("Dashboard");
+
+    let header = Paragraph::new(title)
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
+
+    // Dashboard content
+    if let Some(state) = &app.dashboard_state {
+        let grid = GridLayout::new(chunks[1]);
+
+        for (widget, rect) in grid.layout_widgets(&state.widgets) {
+            // Only render if widget has meaningful size
+            if rect.width >= 4 && rect.height >= 2 {
+                render_widget(f, widget, rect);
+            }
+        }
+    } else {
+        let loading = Paragraph::new("No dashboard loaded")
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(loading, chunks[1]);
+    }
+
+    // Footer
+    let footer = Paragraph::new("'q' quit | 'r' refresh | 's' stats | 'd' dashboard")
+        .style(Style::default().fg(Color::Gray))
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[2]);
+}
+
+fn render_stats_view(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
@@ -117,7 +312,11 @@ fn ui(f: &mut Frame, app: &App) {
 
     // Header
     let header = Paragraph::new("Honeybadger Dashboard")
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
@@ -171,7 +370,7 @@ fn ui(f: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer = Paragraph::new("Press 'q' to quit, 'r' to refresh")
+    let footer = Paragraph::new("'q' quit | 'r' refresh | 's' stats | 'd' dashboard")
         .style(Style::default().fg(Color::Gray))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);

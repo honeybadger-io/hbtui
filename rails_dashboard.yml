@@ -1,0 +1,214 @@
+---
+title: Rails
+widgets:
+  - id: 692f6411-2481-49f0-88f2-d05b5e712ba4
+    type: insights_vis
+    grid: { x: 0, y: 2, w: 6, h: 3 }
+    presentation:
+      title: Controller durations
+      subtitle: Average by controller
+    config:
+      query: |-
+        fields @preview
+        | filter event_type::str == "process_action.action_controller"
+        | stats round(avg(duration::float), 2) as duration by controller::str, bin()
+        | limit 1000
+      vis:
+        view: line
+        chart_config:
+          groups: {}
+          xField: bin()
+          yField: duration
+          zField: controller
+          groupType: events
+          yFieldUnit: milliseconds
+      streams:
+        - default
+        - internal
+  - id: c0c2d47c-c759-4ff1-9fb1-f8a129a60bc3
+    type: insights_vis
+    grid: { x: 6, y: 9, w: 6, h: 4 }
+    presentation:
+      title: Slowest queries per request
+      subtitle: ""
+    config:
+      query: |-
+        fields @preview
+        | filter event_type::str == "sql.active_record"
+        | stats count() as ct, avg(duration::float) as avg, max(duration::float) as max by request_id::str
+        | sort avg
+        | only ct as `Count`,
+          toHumanString(avg, "milliseconds") as `Avg`,
+          toHumanString(max, "milliseconds") as `Max`,
+          request_id as `Request ID`
+        | limit 10
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+        - internal
+  - id: d114c9b2-3969-406f-9746-21d0d2841dfc
+    type: insights_vis
+    grid: { x: 6, y: 2, w: 6, h: 3 }
+    presentation:
+      title: Responses
+      subtitle: Grouped by status codes
+    config:
+      query: |-
+        filter event_type::str == "process_action.action_controller"
+        | fields cond(
+          status::int between 200 and 299, "2XX",
+          status::int between 300 and 399, "3XX",
+          status::int between 400 and 499, "4XX",
+          status::int >= 500, "5XX",
+          "OTHER"
+        ) as status_group
+        | stats count() by status_group, bin() as `time`
+        | limit 1000
+        | sort time asc
+      vis:
+        view: line
+        chart_config:
+          groups: {}
+          xField: time
+          yField: count()
+          zField: status_group
+          groupType: events
+      streams:
+        - default
+        - internal
+  - id: 6b4c0efe-fc4d-48c2-80f8-a4c5813e5899
+    type: insights_vis
+    grid: { x: 0, y: 13, w: 12, h: 4 }
+    presentation:
+      title: Slowest queries
+      subtitle: ""
+    config:
+      query: |-
+        fields @ts, @preview
+        | filter event_type::str == "sql.active_record"
+        | stats count() as ct, avg(duration::float) as duration by query::str
+        | sort duration
+        | only toHumanString(ct) as `Total Executions`, toHumanString(duration, "milliseconds") as `Avg Execution Time`, query as `Query`
+        | limit 10
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+        - internal
+  - id: a209fc22-ab6a-4467-abba-6877a4aaad3a
+    type: insights_vis
+    grid: { x: 0, y: 5, w: 6, h: 4 }
+    presentation:
+      title: Slowest partials
+      subtitle: ""
+    config:
+      query: |-
+        filter event_type::str in ["render_template.action_view", "render_collection.action_view", "render_partial.action_view"]
+        | fields
+          cond(
+            event_type::str == "render_template.action_view", "template",
+            event_type::str == "render_collection.action_view", "collection",
+            event_type::str == "render_partial.action_view", "partial",
+            "none"
+        ) as view_type,
+          replace(view::str, /(\[PROJECT_ROOT\])*(views\/)*/, "") as view
+        | stats
+          count() as ct,
+          toHumanString(avg(duration::float), "milliseconds") as duration
+          by view_type, view
+        | sort duration
+        | limit 10
+        | only toHumanString(ct) as `Count`, duration as `Avg duration`, view_type as `View Type`, view as `View Path`
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+        - internal
+  - id: 45433f0e-91ec-45e9-8366-5da2eb05789a
+    type: insights_vis
+    grid: { x: 0, y: 0, w: 6, h: 2 }
+    presentation:
+      title: Total requests
+      subtitle: ""
+    config:
+      query: |-
+        filter event_type::str == "process_action.action_controller"
+        | stats count() as `Request count` by bin() as `Time`
+      vis:
+        view: line
+        chart_config:
+          groups: {}
+          xField: Time
+          yField: Request count
+          groupType: events
+      streams:
+        - default
+        - internal
+  - id: ea244bc2-75bc-48cc-bb07-50c3015ce7fa
+    type: insights_vis
+    grid: { x: 6, y: 0, w: 6, h: 2 }
+    presentation:
+      title: Response distributions
+      subtitle: Binned by 100ms
+    config:
+      query: |-
+        fields floor(duration::float / 100) * 100 as `Time Bin`
+        | filter event_type::str == "process_action.action_controller"
+        | stats count() as `Duration Count` by `Time Bin`
+        | limit 500
+      vis:
+        view: histogram
+        chart_config:
+          groups:
+            Duration Count:
+              color: "#2ab7f4"
+          xField: Time Bin
+          yField: Duration Count
+          xFieldUnit: milliseconds
+      streams:
+        - default
+        - internal
+  - id: 0de2152d-7375-472d-bd59-54c1be0a49ac
+    type: insights_vis
+    grid: { x: 6, y: 5, w: 6, h: 4 }
+    presentation:
+      title: Slowest controller actions
+      subtitle: ""
+    config:
+      query: |-
+        fields @preview
+        | filter event_type::str == "process_action.action_controller"
+        | stats avg(duration::float) as avgDuration, max(duration::float) as maxDuration by controller::str, action::str
+        | sort avgDuration
+        | limit 10
+        | only controller as Controller, action as Action,
+          toHumanString(avgDuration, "milliseconds") as `Avg Duration`,
+          toHumanString(maxDuration, "milliseconds") as `Max Duration`
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+        - internal
+  - id: aa82cf33-ad1e-4b6b-b691-7586ef5133bc
+    type: insights_vis
+    grid: { x: 0, y: 9, w: 6, h: 4 }
+    presentation:
+      title: Cache hit rates
+      subtitle: ""
+    config:
+      query: |-
+        filter event_type::str == "cache_read.active_support"
+        | stats count() as calls, count(hit::bool == true) / calls as hitRate by key::str
+        | sort hitRate asc
+        | only toHumanString(calls) as Calls, concat(toString(round(hitRate * 100, 1)), "%") as `Hit rate`, key as Key
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+        - internal

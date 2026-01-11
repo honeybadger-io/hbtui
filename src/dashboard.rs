@@ -30,8 +30,9 @@ pub struct GridPosition {
     pub h: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct WidgetPresentation {
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub subtitle: String,
@@ -71,6 +72,11 @@ pub struct ChartConfig {
     pub x_field_unit: Option<String>,
     #[serde(rename = "yFieldUnit")]
     pub y_field_unit: Option<String>,
+    // Billboard specific fields
+    #[serde(rename = "titleField")]
+    pub title_field: Option<String>,
+    #[serde(rename = "valueField")]
+    pub value_field: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

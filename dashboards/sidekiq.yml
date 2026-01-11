@@ -1,0 +1,123 @@
+---
+title: Sidekiq
+widgets:
+  - id: d6e90356-ccd1-48bb-a854-59f5d4527413
+    type: insights_vis
+    grid: { x: 0, y: 0, w: 2, h: 3 }
+    presentation: {}
+    config:
+      query: |-
+        filter event_type::str == "perform.sidekiq"
+        | stats toHumanString(count()) as count by status::str
+        | sort status
+      vis:
+        view: billboard
+        chart_config:
+          groupType: events
+          titleField: status
+          valueField: count
+      streams:
+        - default
+  - id: f935c5e1-cafc-489e-8e08-e84f05ea1d33
+    type: insights_vis
+    grid: { x: 2, y: 0, w: 10, h: 3 }
+    presentation:
+      title: Job counts
+      subtitle: Averaged by worker class
+    config:
+      query: |-
+        filter event_type::str == "perform.sidekiq"
+        | stats count() by bin(), worker::str
+      vis:
+        view: line
+        chart_config:
+          groups: {}
+          xField: bin()
+          yField: count()
+          zField: worker
+          groupType: events
+      streams:
+        - default
+  - id: 1a0a2dcf-a012-41aa-8860-a6add1c41f40
+    type: insights_vis
+    grid: { x: 0, y: 3, w: 6, h: 3 }
+    presentation:
+      title: Job durations
+      subtitle: Averaged by worker class
+    config:
+      query: |-
+        filter event_type::str == "perform.sidekiq"
+        | stats avg(duration::float) as avgDuration by bin(), worker::str
+      vis:
+        view: line
+        chart_config:
+          groups: {}
+          xField: bin()
+          yField: avgDuration
+          zField: worker
+          groupType: events
+          yFieldUnit: milliseconds
+      streams:
+        - default
+  - id: f58a4faa-93a3-418a-bd27-43599f65fdbf
+    type: insights_vis
+    grid: { x: 0, y: 6, w: 6, h: 4 }
+    presentation:
+      title: Worker stats
+    config:
+      query: |-
+        filter event_type::str == "perform.sidekiq"
+        | stats
+          toHumanString(count(status::str == "success")) as Successes,
+          toHumanString(count(status::str == "failure")) as Failures,
+          toHumanString(sum(duration::float), "milliseconds") as totalTime,
+          toHumanString(avg(duration::float), "milliseconds") as avgTime
+        by worker::str as `Worker Name`
+        | only `Worker Name`, Successes, Failures, totalTime as `Total execution time`, avgTime as `Avg execution time`
+      vis:
+        view: table
+        chart_config: {}
+      streams:
+        - default
+  - id: 85455431-cad9-4f02-aaa6-4739375250cf
+    type: insights_vis
+    grid: { x: 6, y: 3, w: 6, h: 3 }
+    presentation:
+      title: Duration distributions
+      subtitle: By worker
+    config:
+      query: |-
+        fields floor(duration::float / 100) * 100 as `Time Bin`
+        | filter event_type::str == "perform.sidekiq"
+        | stats count() as `Duration Count` by `Time Bin`, worker::str
+        | limit 500
+      vis:
+        view: histogram
+        chart_config:
+          groups: {}
+          xField: Time Bin
+          yField: Duration Count
+          zField: worker
+          xFieldUnit: milliseconds
+      streams:
+        - default
+  - id: 3c0749ff-ae48-4e46-8d7d-728a2204cce3
+    type: insights_vis
+    grid: { x: 6, y: 6, w: 6, h: 4 }
+    presentation:
+      title: 10 slowest job runs
+    config:
+      query: |
+        fields
+          @ts,
+          worker::str as `Worker`,
+          queue::str as `Queue`,
+          status::str as `Status`,
+          toHumanString(duration::float, "milliseconds") as `Duration`
+        | sort duration::float
+        | filter event_type::str == "perform.sidekiq"
+        | limit 10
+      vis:
+        view: table
+      streams:
+        - default

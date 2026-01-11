@@ -514,58 +514,39 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    // Header with tab bar (or widget title if maximized)
-    if let Some(max_idx) = app.maximized_widget_index {
-        // Show widget title when maximized
-        let title = app
-            .active_dashboard()
-            .and_then(|s| s.widgets.get(max_idx))
-            .map(|w| w.widget.presentation.title.as_str())
-            .unwrap_or("Widget");
-
-        let header = Paragraph::new(title)
-            .style(
+    // Header with tab bar (always visible, even when maximized)
+    let tabs: Vec<Span> = app
+        .dashboard_names
+        .iter()
+        .enumerate()
+        .flat_map(|(i, name)| {
+            let is_active = i == app.active_dashboard_index;
+            let tab_style = if is_active {
                 Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(header, chunks[0]);
-    } else {
-        // Show tab bar with dashboard names
-        let tabs: Vec<Span> = app
-            .dashboard_names
-            .iter()
-            .enumerate()
-            .flat_map(|(i, name)| {
-                let is_active = i == app.active_dashboard_index;
-                let tab_style = if is_active {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
 
-                let separator = if i > 0 {
-                    vec![Span::raw(" ")]
-                } else {
-                    vec![]
-                };
+            let separator = if i > 0 {
+                vec![Span::raw(" ")]
+            } else {
+                vec![]
+            };
 
-                let tab = vec![Span::styled(
-                    format!("[{}:{}]", i + 1, name),
-                    tab_style,
-                )];
+            let tab = vec![Span::styled(
+                format!("[{}:{}]", i + 1, name),
+                tab_style,
+            )];
 
-                separator.into_iter().chain(tab)
-            })
-            .collect();
+            separator.into_iter().chain(tab)
+        })
+        .collect();
 
-        let header = Paragraph::new(Line::from(tabs))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(header, chunks[0]);
-    }
+    let header = Paragraph::new(Line::from(tabs))
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
 
     // Dashboard content
     if let Some(state) = app.active_dashboard() {
@@ -573,8 +554,7 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         if let Some(max_idx) = app.maximized_widget_index {
             // Render only the maximized widget filling the content area
             if let Some(widget) = state.widgets.get(max_idx) {
-                let dashboard_name = app.dashboard_names.get(app.active_dashboard_index).map(|s| s.as_str());
-                render_maximized_widget(f, widget, chunks[1], app.histogram_series_filter, dashboard_name);
+                render_maximized_widget(f, widget, chunks[1], app.histogram_series_filter);
             }
         } else {
             // Normal grid view

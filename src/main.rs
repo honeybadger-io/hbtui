@@ -23,7 +23,7 @@ mod widgets;
 use dashboard::{Dashboard, DashboardState, WidgetState};
 use honeybadger::{HoneybadgerClient, ProjectStats};
 use layout::{find_adjacent_widget, GridLayout, NavDirection};
-use widgets::render_widget;
+use widgets::{render_widget, render_maximized_widget};
 
 /// Message type for async widget updates
 #[derive(Debug)]
@@ -328,7 +328,7 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         if let Some(max_idx) = app.maximized_widget_index {
             // Render only the maximized widget filling the content area
             if let Some(widget) = state.widgets.get(max_idx) {
-                render_widget(f, widget, chunks[1], true);
+                render_maximized_widget(f, widget, chunks[1]);
             }
         } else {
             // Normal grid view

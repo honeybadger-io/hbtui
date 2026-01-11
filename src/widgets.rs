@@ -1,13 +1,16 @@
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
-    text::Span,
+    text::{Line, Span},
     widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, GraphType, LegendPosition, Paragraph, Row, Table},
     Frame,
 };
 
 use crate::dashboard::{ChartConfig, InsightsResponse, WidgetRuntime, WidgetState};
+
+/// Standard colors for chart series
+const SERIES_COLORS: [Color; 5] = [Color::Cyan, Color::Yellow, Color::Green, Color::Magenta, Color::Red];
 
 /// Convert unit name to short suffix
 fn format_unit_suffix(unit: Option<&str>) -> &str {
@@ -241,12 +244,13 @@ fn render_line_chart(
         vec![]
     };
 
-    // Colors for different series
-    let colors = [Color::Cyan, Color::Yellow, Color::Green, Color::Magenta, Color::Red];
-
-    // Sort series by name for stable ordering
+    // Sort series by average value descending (highest first)
     let mut sorted_series: Vec<_> = series.into_iter().collect();
-    sorted_series.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted_series.sort_by(|a, b| {
+        let avg_a = if a.1.is_empty() { 0.0 } else { a.1.iter().map(|(_, y)| y).sum::<f64>() / a.1.len() as f64 };
+        let avg_b = if b.1.is_empty() { 0.0 } else { b.1.iter().map(|(_, y)| y).sum::<f64>() / b.1.len() as f64 };
+        avg_b.partial_cmp(&avg_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let has_multiple_series = sorted_series.len() > 1;
 
@@ -259,7 +263,7 @@ fn render_line_chart(
                 .name(name.clone())
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(colors[i % colors.len()]))
+                .style(Style::default().fg(SERIES_COLORS[i % SERIES_COLORS.len()]))
                 .data(points)
         })
         .collect();
@@ -363,5 +367,176 @@ fn format_json_value(value: &serde_json::Value) -> String {
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Null => "null".to_string(),
         _ => value.to_string(),
+    }
+}
+
+/// Extract series names from a line chart's data for legend display, sorted by average value (highest first)
+fn extract_series_names(response: &InsightsResponse, config: &ChartConfig) -> Vec<String> {
+    let z_field = config.z_field.as_deref();
+    let y_field = config.y_field.as_deref().unwrap_or("y");
+
+    if z_field.is_none() {
+        return vec![];
+    }
+
+    // Collect series with their y-values (sum and count for averaging)
+    let mut series_stats: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
+
+    for row in &response.results {
+        let group = z_field
+            .and_then(|zf| row.get(zf))
+            .map(|v| format_json_value(v))
+            .unwrap_or_else(|| y_field.to_string());
+
+        let y = row
+            .get(y_field)
+            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(0.0);
+
+        let entry = series_stats.entry(group).or_insert((0.0, 0));
+        entry.0 += y;
+        entry.1 += 1;
+    }
+
+    // Sort by average value descending
+    let mut sorted: Vec<_> = series_stats.into_iter().collect();
+    sorted.sort_by(|a, b| {
+        let avg_a = if a.1.1 == 0 { 0.0 } else { a.1.0 / a.1.1 as f64 };
+        let avg_b = if b.1.1 == 0 { 0.0 } else { b.1.0 / b.1.1 as f64 };
+        avg_b.partial_cmp(&avg_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let names: Vec<String> = sorted.into_iter().map(|(name, _)| name).collect();
+
+    // If only one series and it matches the y_field, don't show legend
+    if names.len() <= 1 && names.first().map(|s| s.as_str()) == Some(y_field) {
+        return vec![];
+    }
+
+    names
+}
+
+/// Render the legend for a line chart with colored squares
+fn render_legend(f: &mut Frame, series_names: &[String], area: Rect) {
+    if series_names.is_empty() || area.height < 1 {
+        return;
+    }
+
+    // Build spans with colored squares and names
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, name) in series_names.iter().enumerate() {
+        let color = SERIES_COLORS[i % SERIES_COLORS.len()];
+        // Add spacing between entries
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        // Colored square (using a filled block character)
+        spans.push(Span::styled("■ ", Style::default().fg(color)));
+        // Series name
+        spans.push(Span::raw(name.clone()));
+    }
+
+    // Wrap into lines if needed (simple wrapping based on terminal width)
+    let mut lines: Vec<Line> = Vec::new();
+    let mut current_spans: Vec<Span> = Vec::new();
+    let mut current_width: usize = 0;
+    let max_width = area.width.saturating_sub(2) as usize;
+
+    for (i, name) in series_names.iter().enumerate() {
+        let color = SERIES_COLORS[i % SERIES_COLORS.len()];
+        let entry_width = 2 + name.len() + 2; // "■ " + name + "  "
+
+        if current_width + entry_width > max_width && !current_spans.is_empty() {
+            lines.push(Line::from(current_spans));
+            current_spans = Vec::new();
+            current_width = 0;
+        }
+
+        if !current_spans.is_empty() {
+            current_spans.push(Span::raw("  "));
+            current_width += 2;
+        }
+        current_spans.push(Span::styled("■ ", Style::default().fg(color)));
+        current_spans.push(Span::raw(name.clone()));
+        current_width += 2 + name.len();
+    }
+
+    if !current_spans.is_empty() {
+        lines.push(Line::from(current_spans));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::TOP));
+    f.render_widget(paragraph, area);
+}
+
+/// Render a maximized widget with legend below (for line charts with z-field)
+pub fn render_maximized_widget(f: &mut Frame, widget: &WidgetRuntime, area: Rect) {
+    let title = &widget.widget.presentation.title;
+    let view_type = &widget.widget.config.vis.view;
+
+    // Check if this is a line chart with series data
+    let series_names = if view_type == "line" {
+        if let WidgetState::Loaded(response) = &widget.state {
+            extract_series_names(response, &widget.widget.config.vis.chart_config)
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    // Calculate legend height needed (lines of legend text)
+    let legend_height = if series_names.is_empty() {
+        0
+    } else {
+        // Estimate lines needed based on total text width
+        let total_width: usize = series_names.iter().map(|n| n.len() + 4).sum();
+        let lines_needed = (total_width / area.width.saturating_sub(4) as usize).max(1) + 1;
+        (lines_needed as u16).min(4) + 1 // +1 for border, cap at 5 total
+    };
+
+    // Split area for chart and legend
+    let (chart_area, legend_area) = if legend_height > 0 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(10),
+                Constraint::Length(legend_height),
+            ])
+            .split(area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (area, None)
+    };
+
+    // Render the widget in the main area
+    let border_style = Style::default().fg(Color::Cyan);
+    let block = Block::default()
+        .title(title.as_str())
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    match &widget.state {
+        WidgetState::Loading => {
+            render_loading(f, block, chart_area);
+        }
+        WidgetState::Error(e) => {
+            render_error(f, block, e, chart_area);
+        }
+        WidgetState::Loaded(response) => {
+            let chart_config = &widget.widget.config.vis.chart_config;
+            match view_type.as_str() {
+                "table" => render_table(f, block, response, chart_area),
+                "line" => render_line_chart(f, block, response, chart_config, chart_area),
+                "histogram" => render_histogram(f, block, response, chart_config, chart_area),
+                _ => render_table(f, block, response, chart_area),
+            }
+        }
+    }
+
+    // Render legend if we have series names
+    if let Some(legend_rect) = legend_area {
+        render_legend(f, &series_names, legend_rect);
     }
 }

@@ -941,8 +941,9 @@ pub fn render_maximized_widget(
     widget: &WidgetRuntime,
     area: Rect,
     histogram_series_filter: Option<usize>,
+    dashboard_name: Option<&str>,
 ) {
-    let base_title = &widget.widget.presentation.title;
+    let widget_title = &widget.widget.presentation.title;
     let view_type = &widget.widget.config.vis.view;
 
     // Check if this is a chart with series data (line or histogram with z-field)
@@ -956,17 +957,22 @@ pub fn render_maximized_widget(
         vec![]
     };
 
-    // Build title with series filter info for histograms
+    // Build title: "Dashboard > Widget" with optional series filter info
+    let base_title = match dashboard_name {
+        Some(name) => format!("{} > {}", name, widget_title),
+        None => widget_title.clone(),
+    };
+
     let title = if view_type == "histogram" && !series_names.is_empty() {
         match histogram_series_filter {
             None => format!("{} (All - ↑↓ to filter)", base_title),
             Some(idx) if idx < series_names.len() => {
                 format!("{} ({}) - ↑↓ to navigate", base_title, series_names[idx])
             }
-            _ => base_title.clone(),
+            _ => base_title,
         }
     } else {
-        base_title.clone()
+        base_title
     };
 
     // Calculate legend height needed (lines of legend text)

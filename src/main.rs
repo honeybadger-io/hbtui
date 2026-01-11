@@ -573,7 +573,8 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         if let Some(max_idx) = app.maximized_widget_index {
             // Render only the maximized widget filling the content area
             if let Some(widget) = state.widgets.get(max_idx) {
-                render_maximized_widget(f, widget, chunks[1], app.histogram_series_filter);
+                let dashboard_name = app.dashboard_names.get(app.active_dashboard_index).map(|s| s.as_str());
+                render_maximized_widget(f, widget, chunks[1], app.histogram_series_filter, dashboard_name);
             }
         } else {
             // Normal grid view

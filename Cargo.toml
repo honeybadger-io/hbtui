@@ -1,7 +1,7 @@
 [package]
 name = "hbtui"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Terminal dashboard for Honeybadger.io"
 license = "MIT"
 repository = "https://github.com/honeybadger-io/hbtui"

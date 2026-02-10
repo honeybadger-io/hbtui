@@ -55,6 +55,10 @@ hbtui -p 12345 -d ./dashboards/
 | `-h, --help`       |                                   | Print help                                         |
 | `-V, --version`    |                                   | Print version                                      |
 
+### Security
+
+For security, we recommend using the environment variable `HONEYBADGER_PERSONAL_AUTH_TOKEN` instead of the `--auth-token` flag. Command-line arguments may be visible in process listings.
+
 #### EU Region
 
 If your Honeybadger account is in the [EU region](https://docs.honeybadger.io/resources/data-residency/), use:

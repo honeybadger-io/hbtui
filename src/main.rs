@@ -318,21 +318,13 @@ async fn main() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // Create app
+    // Create app (before terminal setup so we can show clean errors)
     let mut app = App::new(cli.auth_token);
 
     // Try to load dashboards from configured directory
     if std::path::Path::new(&cli.dashboard_dir).is_dir() {
-        if let Err(e) = app.load_dashboards_from_dir(&cli.dashboard_dir, cli.project_id) {
-            eprintln!("Failed to load dashboards: {}", e);
-        }
+        app.load_dashboards_from_dir(&cli.dashboard_dir, cli.project_id)
+            .map_err(|e| anyhow::anyhow!("Failed to load dashboards from {}: {}", cli.dashboard_dir, e))?;
     }
 
     // Fall back to legacy single dashboard file if no dashboards loaded
@@ -341,16 +333,28 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| "rails_dashboard.yml".to_string());
 
         if std::path::Path::new(&dashboard_path).exists() {
-            if let Err(e) = app.load_dashboard(&dashboard_path, cli.project_id) {
-                eprintln!("Failed to load dashboard: {}", e);
-            }
+            app.load_dashboard(&dashboard_path, cli.project_id)
+                .map_err(|e| anyhow::anyhow!("Failed to load dashboard from {}: {}", dashboard_path, e))?;
         }
     }
 
-    // Start fetching widget data if we have dashboards
-    if !app.dashboards.is_empty() {
-        app.fetch_all_widgets();
+    // Validate at least one dashboard was loaded
+    if app.dashboards.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No dashboards found. Expected YAML files in '{}' or file specified by HONEYBADGER_DASHBOARD env var",
+            cli.dashboard_dir
+        ));
     }
+
+    // Start fetching widget data
+    app.fetch_all_widgets();
+
+    // Setup terminal (only after successful dashboard load)
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
     // Run the app
     let res = run_app(&mut terminal, &mut app).await;
@@ -463,36 +467,6 @@ fn ui(f: &mut Frame, app: &App) {
 }
 
 fn render_dashboard_view(f: &mut Frame, app: &App) {
-    // If no dashboards found, show helpful message
-    if app.dashboards.is_empty() {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(10),   // Content
-                Constraint::Length(3), // Footer
-            ])
-            .split(f.area());
-
-        let header = Paragraph::new("Honeybadger TUI")
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(header, chunks[0]);
-
-        let message = Paragraph::new("No dashboards found. Add YAML files to ./dashboards/")
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(message, chunks[1]);
-
-        let footer = Paragraph::new("'q' quit")
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(footer, chunks[2]);
-
-        return;
-    }
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)

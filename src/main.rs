@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use std::path::PathBuf;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -37,8 +38,8 @@ struct Cli {
     project_id: u64,
 
     /// Dashboard file or directory containing YAML files
-    #[arg(short = 'd', long, default_value = "./dashboards", env = "HONEYBADGER_DASHBOARDS")]
-    dashboards: String,
+    #[arg(short = 'd', long, env = "HONEYBADGER_DASHBOARDS")]
+    dashboards: Option<String>,
 
     /// Honeybadger personal auth token
     #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN")]
@@ -311,6 +312,33 @@ impl App {
     }
 }
 
+/// Find dashboards directory, checking in order:
+/// 1. Explicit path from -d flag or HONEYBADGER_DASHBOARDS env
+/// 2. ./.hbtui/dashboards/ (project-local)
+/// 3. ~/.hbtui/dashboards/ (user default)
+fn find_dashboards_path(explicit: Option<&str>) -> Option<PathBuf> {
+    // If explicit path provided, use it (even if it doesn't exist - we'll error later)
+    if let Some(path) = explicit {
+        return Some(PathBuf::from(path));
+    }
+
+    // Check project-local .hbtui/dashboards/
+    let local = PathBuf::from(".hbtui/dashboards");
+    if local.exists() {
+        return Some(local);
+    }
+
+    // Check user default ~/.hbtui/dashboards/
+    if let Some(home) = std::env::var_os("HOME") {
+        let user_default = PathBuf::from(home).join(".hbtui/dashboards");
+        if user_default.exists() {
+            return Some(user_default);
+        }
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse CLI arguments
@@ -319,21 +347,26 @@ async fn main() -> Result<()> {
     // Create app (before terminal setup so we can show clean errors)
     let mut app = App::new(cli.auth_token);
 
+    // Find dashboards path
+    let dashboards_path = find_dashboards_path(cli.dashboards.as_deref());
+
     // Load dashboards from file or directory
-    let dashboards_path = std::path::Path::new(&cli.dashboards);
-    if dashboards_path.is_file() {
-        app.load_dashboard(&cli.dashboards, cli.project_id)
-            .map_err(|e| anyhow::anyhow!("Failed to load dashboard from '{}': {}", cli.dashboards, e))?;
-    } else if dashboards_path.is_dir() {
-        app.load_dashboards_from_dir(&cli.dashboards, cli.project_id)
-            .map_err(|e| anyhow::anyhow!("Failed to load dashboards from '{}': {}", cli.dashboards, e))?;
+    if let Some(path) = &dashboards_path {
+        if path.is_file() {
+            app.load_dashboard(&path.to_string_lossy(), cli.project_id)
+                .map_err(|e| anyhow::anyhow!("Failed to load dashboard from '{}': {}", path.display(), e))?;
+        } else if path.is_dir() {
+            app.load_dashboards_from_dir(&path.to_string_lossy(), cli.project_id)
+                .map_err(|e| anyhow::anyhow!("Failed to load dashboards from '{}': {}", path.display(), e))?;
+        }
     }
 
     // Validate at least one dashboard was loaded
     if app.dashboards.is_empty() {
+        let locations = "./.hbtui/dashboards/ or ~/.hbtui/dashboards/";
         return Err(anyhow::anyhow!(
-            "No dashboards found at '{}'. Provide a YAML file or directory.",
-            cli.dashboards
+            "No dashboards found. Add YAML files to {} or specify with -d flag.",
+            locations
         ));
     }
 

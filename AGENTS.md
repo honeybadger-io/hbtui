@@ -32,7 +32,14 @@ hbtui --version
 |----------|----------|-------------|
 | `HONEYBADGER_PROJECT_ID` | `-p, --project-id` | Honeybadger project ID (required) |
 | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | `--auth-token` | API auth token (required) |
-| `HONEYBADGER_DASHBOARDS` | `-d, --dashboards` | Dashboard file or directory (default: `./dashboards`) |
+| `HONEYBADGER_DASHBOARDS` | `-d, --dashboards` | Dashboard file or directory |
+
+### Dashboard Locations
+
+If `-d` is not specified, hbtui looks for dashboards in order:
+
+1. `./.hbtui/dashboards/` (project-local)
+2. `~/.hbtui/dashboards/` (user default)
 
 ## Development Commands
 

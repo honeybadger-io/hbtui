@@ -46,13 +46,20 @@ hbtui -p 12345 -d ./dashboards/
 
 ### Options
 
-| Flag               | Env Variable                      | Description                                           |
-| ------------------ | --------------------------------- | ----------------------------------------------------- |
-| `-p, --project-id` | `HONEYBADGER_PROJECT_ID`          | Honeybadger project ID (required)                     |
-| `--auth-token`     | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | API auth token (required)                             |
-| `-d, --dashboards` | `HONEYBADGER_DASHBOARDS`          | Dashboard file or directory (default: `./dashboards`) |
-| `-h, --help`       |                                   | Print help                                            |
-| `-V, --version`    |                                   | Print version                                         |
+| Flag               | Env Variable                      | Description                       |
+| ------------------ | --------------------------------- | --------------------------------- |
+| `-p, --project-id` | `HONEYBADGER_PROJECT_ID`          | Honeybadger project ID (required) |
+| `--auth-token`     | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | API auth token (required)         |
+| `-d, --dashboards` | `HONEYBADGER_DASHBOARDS`          | Dashboard file or directory       |
+| `-h, --help`       |                                   | Print help                        |
+| `-V, --version`    |                                   | Print version                     |
+
+### Dashboard Locations
+
+If `-d` is not specified, hbtui looks for dashboards in order:
+
+1. `./.hbtui/dashboards/` (project-local)
+2. `~/.hbtui/dashboards/` (user default)
 
 ## Key Bindings
 

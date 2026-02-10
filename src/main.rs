@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
 use std::io;
@@ -21,7 +21,7 @@ mod layout;
 mod widgets;
 
 use dashboard::{Dashboard, DashboardState, WidgetState};
-use honeybadger::{HoneybadgerClient, ProjectStats};
+use honeybadger::HoneybadgerClient;
 use layout::{find_adjacent_widget, GridLayout, NavDirection};
 use widgets::{render_widget, render_maximized_widget};
 
@@ -35,19 +35,11 @@ pub enum AppMessage {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ViewMode {
-    Stats,
-    Dashboard,
-}
-
 struct App {
     client: HoneybadgerClient,
-    stats: Option<ProjectStats>,
     dashboards: Vec<DashboardState>,
     dashboard_names: Vec<String>,
     active_dashboard_index: usize,
-    view_mode: ViewMode,
     should_quit: bool,
     message_tx: mpsc::Sender<AppMessage>,
     message_rx: mpsc::Receiver<AppMessage>,
@@ -62,11 +54,9 @@ impl App {
         let (tx, rx) = mpsc::channel(100);
         Self {
             client: HoneybadgerClient::new(auth_token),
-            stats: None,
             dashboards: Vec::new(),
             dashboard_names: Vec::new(),
             active_dashboard_index: 0,
-            view_mode: ViewMode::Dashboard,
             should_quit: false,
             message_tx: tx,
             message_rx: rx,
@@ -74,11 +64,6 @@ impl App {
             maximized_widget_index: None,
             histogram_series_filter: None,
         }
-    }
-
-    async fn load_data(&mut self) -> Result<()> {
-        self.stats = Some(self.client.get_project_stats().await?);
-        Ok(())
     }
 
     /// Load all dashboards from a directory
@@ -353,12 +338,6 @@ async fn main() -> Result<()> {
     // Start fetching widget data if we have dashboards
     if !app.dashboards.is_empty() {
         app.fetch_all_widgets();
-    } else {
-        // Fall back to stats view if no dashboards
-        app.view_mode = ViewMode::Stats;
-        if let Err(e) = app.load_data().await {
-            eprintln!("Failed to load stats: {}", e);
-        }
     }
 
     // Run the app
@@ -395,83 +374,56 @@ async fn run_app<B: ratatui::backend::Backend>(
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('r') => {
-                        if app.view_mode == ViewMode::Dashboard {
-                            app.refresh_dashboard();
-                        } else if let Err(e) = app.load_data().await {
-                            eprintln!("Failed to reload data: {}", e);
-                        }
-                    }
-                    KeyCode::Char('s') => {
-                        if app.view_mode != ViewMode::Stats {
-                            app.view_mode = ViewMode::Stats;
-                            if app.stats.is_none() {
-                                if let Err(e) = app.load_data().await {
-                                    eprintln!("Failed to load stats: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('d') => {
-                        if app.view_mode != ViewMode::Dashboard && !app.dashboards.is_empty() {
-                            app.view_mode = ViewMode::Dashboard;
-                        }
+                        app.refresh_dashboard();
                     }
                     // Dashboard switching with [ and ]
                     KeyCode::Char('[') => {
-                        if app.view_mode == ViewMode::Dashboard {
-                            app.prev_dashboard();
-                        }
+                        app.prev_dashboard();
                     }
                     KeyCode::Char(']') => {
-                        if app.view_mode == ViewMode::Dashboard {
-                            app.next_dashboard();
-                        }
+                        app.next_dashboard();
                     }
                     // Number keys to switch dashboards directly (1-9)
                     KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                        if app.view_mode == ViewMode::Dashboard {
-                            let idx = c.to_digit(10).unwrap() as usize - 1;
-                            app.switch_to_dashboard(idx);
-                        }
+                        let idx = c.to_digit(10).unwrap() as usize - 1;
+                        app.switch_to_dashboard(idx);
                     }
                     // Arrow key navigation
                     KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
-                        if app.view_mode == ViewMode::Dashboard {
-                            if let Some(max_idx) = app.maximized_widget_index {
-                                // In maximized view: Up/Down navigate histogram series
-                                if matches!(key.code, KeyCode::Up | KeyCode::Down) {
-                                    if let Some(dashboard) = app.active_dashboard() {
-                                        if let Some(widget) = dashboard.widgets.get(max_idx) {
-                                            if widget.widget.config.vis.view == "histogram"
-                                                && widget.widget.config.vis.chart_config.z_field.is_some()
-                                            {
-                                                // Get series count from the widget data
-                                                if let WidgetState::Loaded(response) = &widget.state {
-                                                    let z_field = widget.widget.config.vis.chart_config.z_field.as_deref().unwrap();
-                                                    let series_count = widgets::count_series(response, z_field);
-                                                    if series_count > 0 {
-                                                        app.navigate_histogram_series(key.code == KeyCode::Up, series_count);
-                                                    }
+                        if let Some(max_idx) = app.maximized_widget_index {
+                            // In maximized view: Up/Down navigate histogram series
+                            if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                                if let Some(dashboard) = app.active_dashboard() {
+                                    if let Some(widget) = dashboard.widgets.get(max_idx) {
+                                        if widget.widget.config.vis.view == "histogram"
+                                            && widget.widget.config.vis.chart_config.z_field.is_some()
+                                        {
+                                            // Get series count from the widget data
+                                            if let WidgetState::Loaded(response) = &widget.state {
+                                                let z_field = widget.widget.config.vis.chart_config.z_field.as_deref().unwrap();
+                                                let series_count = widgets::count_series(response, z_field);
+                                                if series_count > 0 {
+                                                    app.navigate_histogram_series(key.code == KeyCode::Up, series_count);
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            } else {
-                                // Not maximized: regular widget navigation
-                                app.navigate_widget(match key.code {
-                                    KeyCode::Up => NavDirection::Up,
-                                    KeyCode::Down => NavDirection::Down,
-                                    KeyCode::Left => NavDirection::Left,
-                                    KeyCode::Right => NavDirection::Right,
-                                    _ => unreachable!(),
-                                });
                             }
+                        } else {
+                            // Not maximized: regular widget navigation
+                            app.navigate_widget(match key.code {
+                                KeyCode::Up => NavDirection::Up,
+                                KeyCode::Down => NavDirection::Down,
+                                KeyCode::Left => NavDirection::Left,
+                                KeyCode::Right => NavDirection::Right,
+                                _ => unreachable!(),
+                            });
                         }
                     }
                     // Enter to maximize selected widget
                     KeyCode::Enter => {
-                        if app.view_mode == ViewMode::Dashboard && app.maximized_widget_index.is_none() {
+                        if app.maximized_widget_index.is_none() {
                             app.maximized_widget_index = app.selected_widget_index;
                             app.histogram_series_filter = None; // Reset filter when entering maximized view
                         }
@@ -495,13 +447,40 @@ async fn run_app<B: ratatui::backend::Backend>(
 }
 
 fn ui(f: &mut Frame, app: &App) {
-    match app.view_mode {
-        ViewMode::Stats => render_stats_view(f, app),
-        ViewMode::Dashboard => render_dashboard_view(f, app),
-    }
+    render_dashboard_view(f, app);
 }
 
 fn render_dashboard_view(f: &mut Frame, app: &App) {
+    // If no dashboards found, show helpful message
+    if app.dashboards.is_empty() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(3), // Header
+                Constraint::Min(10),   // Content
+                Constraint::Length(3), // Footer
+            ])
+            .split(f.area());
+
+        let header = Paragraph::new("Honeybadger TUI")
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(header, chunks[0]);
+
+        let message = Paragraph::new("No dashboards found. Add YAML files to ./dashboards/")
+            .style(Style::default().fg(Color::Gray))
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(message, chunks[1]);
+
+        let footer = Paragraph::new("'q' quit")
+            .style(Style::default().fg(Color::Gray))
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(footer, chunks[2]);
+
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -586,83 +565,6 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         "'q' quit | 'r' refresh | [/] switch | arrows navigate | Enter maximize"
     };
     let footer = Paragraph::new(footer_text)
-        .style(Style::default().fg(Color::Gray))
-        .block(Block::default().borders(Borders::ALL));
-    f.render_widget(footer, chunks[2]);
-}
-
-fn render_stats_view(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(2)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
-            Constraint::Length(3),
-        ])
-        .split(f.area());
-
-    // Header
-    let header = Paragraph::new("Honeybadger Dashboard")
-        .style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .block(Block::default().borders(Borders::ALL));
-    f.render_widget(header, chunks[0]);
-
-    // Main content area
-    let main_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
-
-    // Project stats
-    if let Some(stats) = &app.stats {
-        let stats_text = vec![
-            Line::from(vec![
-                Span::styled("Total Projects: ", Style::default().fg(Color::Cyan)),
-                Span::raw(stats.total_projects.to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled("Total Faults: ", Style::default().fg(Color::Red)),
-                Span::raw(stats.total_faults.to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled("Unresolved Faults: ", Style::default().fg(Color::Yellow)),
-                Span::raw(stats.unresolved_faults.to_string()),
-            ]),
-        ];
-
-        let stats_widget = Paragraph::new(stats_text)
-            .block(Block::default().title("Statistics").borders(Borders::ALL));
-        f.render_widget(stats_widget, main_chunks[0]);
-
-        // Recent projects list
-        let projects: Vec<ListItem> = stats
-            .recent_projects
-            .iter()
-            .map(|p| {
-                let content = vec![Line::from(vec![
-                    Span::styled(&p.name, Style::default().fg(Color::Green)),
-                    Span::raw(format!(" ({} faults)", p.fault_count)),
-                ])];
-                ListItem::new(content)
-            })
-            .collect();
-
-        let projects_list = List::new(projects)
-            .block(Block::default().title("Recent Projects").borders(Borders::ALL));
-        f.render_widget(projects_list, main_chunks[1]);
-    } else {
-        let loading = Paragraph::new("Loading data...")
-            .block(Block::default().title("Statistics").borders(Borders::ALL));
-        f.render_widget(loading, main_chunks[0]);
-    }
-
-    // Footer
-    let footer = Paragraph::new("'q' quit | 'r' refresh | 's' stats | 'd' dashboard")
         .style(Style::default().fg(Color::Gray))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);

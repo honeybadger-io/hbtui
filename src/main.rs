@@ -363,11 +363,16 @@ async fn main() -> Result<()> {
 
     // Validate at least one dashboard was loaded
     if app.dashboards.is_empty() {
-        let locations = "./.hbtui/dashboards/ or ~/.hbtui/dashboards/";
-        return Err(anyhow::anyhow!(
-            "No dashboards found. Add YAML files to {} or specify with -d flag.",
-            locations
-        ));
+        return Err(if let Some(explicit) = &cli.dashboards {
+            anyhow::anyhow!(
+                "No dashboards found at '{}'. Check that the path exists and contains YAML files.",
+                explicit
+            )
+        } else {
+            anyhow::anyhow!(
+                "No dashboards found. Add YAML files to ./.hbtui/dashboards/ or ~/.hbtui/dashboards/"
+            )
+        });
     }
 
     // Start fetching widget data

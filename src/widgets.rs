@@ -165,6 +165,18 @@ fn render_line_chart(
     config: &ChartConfig,
     area: Rect,
 ) {
+    render_line_chart_with_filter(f, block, response, config, area, None);
+}
+
+/// Render line chart with optional series filter
+fn render_line_chart_with_filter(
+    f: &mut Frame,
+    block: Block,
+    response: &InsightsResponse,
+    config: &ChartConfig,
+    area: Rect,
+    series_filter: Option<usize>,
+) {
     if response.results.is_empty() {
         let empty = Paragraph::new("No data")
             .style(Style::default().fg(Color::DarkGray))
@@ -240,17 +252,6 @@ fn render_line_chart(
         .fold(f64::NEG_INFINITY, f64::max)
         * 1.1;
 
-    // Generate Y-axis labels (5 values from min to max)
-    let y_labels: Vec<Span> = (0..=4)
-        .map(|i| {
-            let val = y_min + (y_max - y_min) * (i as f64 / 4.0);
-            Span::styled(
-                format!("{:.0}{}", val, y_unit),
-                Style::default().fg(Color::DarkGray),
-            )
-        })
-        .collect();
-
     // Generate X-axis labels (pick ~5 evenly spaced)
     let x_labels: Vec<Span> = if !x_labels_raw.is_empty() {
         let step = (x_labels_raw.len() / 5).max(1);
@@ -286,16 +287,45 @@ fn render_line_chart(
 
     let has_multiple_series = sorted_series.len() > 1;
 
-    // Create datasets
-    let datasets: Vec<Dataset> = sorted_series
+    // Filter series if filter is set
+    let filtered_series: Vec<_> = sorted_series
         .iter()
         .enumerate()
+        .filter(|(i, _)| series_filter.is_none() || series_filter == Some(*i))
+        .collect();
+
+    // Recalculate y bounds if filtering to a single series
+    let y_max = if series_filter.is_some() {
+        filtered_series
+            .iter()
+            .flat_map(|(_, (_, points))| points.iter().map(|(_, y)| *y))
+            .fold(f64::NEG_INFINITY, f64::max)
+            * 1.1
+    } else {
+        y_max
+    };
+    let y_max = y_max.max(1.0); // Ensure minimum
+
+    // Regenerate Y-axis labels with potentially new bounds
+    let y_labels: Vec<Span> = (0..=4)
+        .map(|i| {
+            let val = y_min + (y_max - y_min) * (i as f64 / 4.0);
+            Span::styled(
+                format!("{:.0}{}", val, y_unit),
+                Style::default().fg(Color::DarkGray),
+            )
+        })
+        .collect();
+
+    // Create datasets
+    let datasets: Vec<Dataset> = filtered_series
+        .iter()
         .map(|(i, (name, points))| {
             Dataset::default()
-                .name(name.clone())
+                .name((*name).clone())
                 .marker(symbols::Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(SERIES_COLORS[i % SERIES_COLORS.len()]))
+                .style(Style::default().fg(SERIES_COLORS[*i % SERIES_COLORS.len()]))
                 .data(points)
         })
         .collect();
@@ -315,8 +345,8 @@ fn render_line_chart(
                 .labels(y_labels),
         );
 
-    // Add legend for multi-series charts
-    if has_multiple_series {
+    // Add legend for multi-series charts (only when showing all)
+    if has_multiple_series && series_filter.is_none() {
         chart = chart.legend_position(Some(LegendPosition::TopRight));
     }
 
@@ -1021,8 +1051,8 @@ pub fn render_maximized_widget(
         vec![]
     };
 
-    // Build title with optional series filter info for histograms
-    let title = if view_type == "histogram" && !series_names.is_empty() {
+    // Build title with optional series filter info for charts with multiple series
+    let title = if (view_type == "histogram" || view_type == "line") && !series_names.is_empty() {
         match histogram_series_filter {
             None => format!("{} (All - ↑↓ to filter)", widget_title),
             Some(idx) if idx < series_names.len() => {
@@ -1073,7 +1103,14 @@ pub fn render_maximized_widget(
             let chart_config = &widget.widget.config.vis.chart_config;
             match view_type.as_str() {
                 "table" => render_table(f, block, response, chart_area),
-                "line" => render_line_chart(f, block, response, chart_config, chart_area),
+                "line" => render_line_chart_with_filter(
+                    f,
+                    block,
+                    response,
+                    chart_config,
+                    chart_area,
+                    histogram_series_filter,
+                ),
                 "histogram" => render_histogram_with_filter(
                     f,
                     block,

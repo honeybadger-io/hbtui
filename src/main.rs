@@ -239,11 +239,9 @@ impl App {
     fn navigate_widget(&mut self, direction: NavDirection) {
         if let (Some(state), Some(current_idx)) =
             (self.active_dashboard(), self.selected_widget_index)
-        {
-            if let Some(new_idx) = find_adjacent_widget(&state.widgets, current_idx, direction) {
+            && let Some(new_idx) = find_adjacent_widget(&state.widgets, current_idx, direction) {
                 self.selected_widget_index = Some(new_idx);
             }
-        }
     }
 
     /// Navigate histogram series filter in maximized view
@@ -378,8 +376,8 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         terminal.draw(|f| ui(f, app))?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('r') => {
@@ -401,10 +399,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
                         if let Some(max_idx) = app.maximized_widget_index {
                             // In maximized view: Up/Down navigate histogram series
-                            if matches!(key.code, KeyCode::Up | KeyCode::Down) {
-                                if let Some(dashboard) = app.active_dashboard() {
-                                    if let Some(widget) = dashboard.widgets.get(max_idx) {
-                                        if widget.widget.config.vis.view == "histogram"
+                            if matches!(key.code, KeyCode::Up | KeyCode::Down)
+                                && let Some(dashboard) = app.active_dashboard()
+                                    && let Some(widget) = dashboard.widgets.get(max_idx) {
+                                        let view = &widget.widget.config.vis.view;
+                                        if (view == "histogram" || view == "line")
                                             && widget.widget.config.vis.chart_config.z_field.is_some()
                                         {
                                             // Get series count from the widget data
@@ -417,8 +416,6 @@ async fn run_app<B: ratatui::backend::Backend>(
                                             }
                                         }
                                     }
-                                }
-                            }
                         } else {
                             // Not maximized: regular widget navigation
                             app.navigate_widget(match key.code {
@@ -447,7 +444,6 @@ async fn run_app<B: ratatui::backend::Backend>(
                     _ => {}
                 }
             }
-        }
 
         if app.should_quit {
             return Ok(());

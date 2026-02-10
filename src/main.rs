@@ -36,9 +36,9 @@ struct Cli {
     #[arg(short, long, env = "HONEYBADGER_PROJECT_ID")]
     project_id: u64,
 
-    /// Directory containing dashboard YAML files
-    #[arg(short = 'd', long, default_value = "./dashboards")]
-    dashboard_dir: String,
+    /// Dashboard file or directory containing YAML files
+    #[arg(short = 'd', long, default_value = "./dashboards", env = "HONEYBADGER_DASHBOARDS")]
+    dashboards: String,
 
     /// Honeybadger personal auth token
     #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN")]
@@ -321,28 +321,21 @@ async fn main() -> Result<()> {
     // Create app (before terminal setup so we can show clean errors)
     let mut app = App::new(cli.auth_token);
 
-    // Try to load dashboards from configured directory
-    if std::path::Path::new(&cli.dashboard_dir).is_dir() {
-        app.load_dashboards_from_dir(&cli.dashboard_dir, cli.project_id)
-            .map_err(|e| anyhow::anyhow!("Failed to load dashboards from {}: {}", cli.dashboard_dir, e))?;
-    }
-
-    // Fall back to legacy single dashboard file if no dashboards loaded
-    if app.dashboards.is_empty() {
-        let dashboard_path = std::env::var("HONEYBADGER_DASHBOARD")
-            .unwrap_or_else(|_| "rails_dashboard.yml".to_string());
-
-        if std::path::Path::new(&dashboard_path).exists() {
-            app.load_dashboard(&dashboard_path, cli.project_id)
-                .map_err(|e| anyhow::anyhow!("Failed to load dashboard from {}: {}", dashboard_path, e))?;
-        }
+    // Load dashboards from file or directory
+    let dashboards_path = std::path::Path::new(&cli.dashboards);
+    if dashboards_path.is_file() {
+        app.load_dashboard(&cli.dashboards, cli.project_id)
+            .map_err(|e| anyhow::anyhow!("Failed to load dashboard from '{}': {}", cli.dashboards, e))?;
+    } else if dashboards_path.is_dir() {
+        app.load_dashboards_from_dir(&cli.dashboards, cli.project_id)
+            .map_err(|e| anyhow::anyhow!("Failed to load dashboards from '{}': {}", cli.dashboards, e))?;
     }
 
     // Validate at least one dashboard was loaded
     if app.dashboards.is_empty() {
         return Err(anyhow::anyhow!(
-            "No dashboards found. Expected YAML files in '{}' or file specified by HONEYBADGER_DASHBOARD env var",
-            cli.dashboard_dir
+            "No dashboards found at '{}'. Provide a YAML file or directory.",
+            cli.dashboards
         ));
     }
 

@@ -42,7 +42,7 @@ struct Cli {
     dashboards: Option<String>,
 
     /// Honeybadger personal auth token
-    #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN")]
+    #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN", hide_env_values = true)]
     auth_token: String,
 }
 

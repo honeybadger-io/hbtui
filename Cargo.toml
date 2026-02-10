@@ -5,6 +5,7 @@ edition = "2024"
 description = "Terminal dashboard for Honeybadger.io"
 license = "MIT"
 repository = "https://github.com/honeybadger-io/hbtui"
+homepage = "https://www.honeybadger.io"
 keywords = ["honeybadger", "tui", "dashboard", "monitoring"]
 categories = ["command-line-utilities", "visualization"]
 readme = "README.md"
@@ -22,3 +23,8 @@ anyhow = "1.0"
 serde_yaml = "0.9"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -140,3 +140,13 @@ Tests cover:
 - Client timeout configuration
 - Widget navigation logic (layout)
 - Grid calculations
+
+## Commit Messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+<type>: <subject>
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`

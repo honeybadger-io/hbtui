@@ -2,6 +2,13 @@
 name = "hbtui"
 version = "0.1.0"
 edition = "2021"
+description = "Terminal dashboard for Honeybadger.io"
+license = "MIT"
+repository = "https://github.com/honeybadger-io/hbtui"
+keywords = ["honeybadger", "tui", "dashboard", "monitoring"]
+categories = ["command-line-utilities", "visualization"]
+readme = "README.md"
+authors = ["Honeybadger Industries LLC"]
 
 [dependencies]
 ratatui = "0.29"

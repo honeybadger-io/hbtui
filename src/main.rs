@@ -44,6 +44,10 @@ struct Cli {
     /// Honeybadger personal auth token
     #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN", hide_env_values = true)]
     auth_token: String,
+
+    /// API endpoint URL
+    #[arg(long, env = "HONEYBADGER_ENDPOINT", default_value = "https://app.honeybadger.io")]
+    endpoint: String,
 }
 
 /// Message type for async widget updates
@@ -71,10 +75,10 @@ struct App {
 }
 
 impl App {
-    fn new(auth_token: String) -> Self {
+    fn new(auth_token: String, endpoint: String) -> Self {
         let (tx, rx) = mpsc::channel(100);
         Self {
-            client: HoneybadgerClient::new(auth_token),
+            client: HoneybadgerClient::new(auth_token, endpoint),
             dashboards: Vec::new(),
             dashboard_names: Vec::new(),
             active_dashboard_index: 0,
@@ -345,7 +349,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Create app (before terminal setup so we can show clean errors)
-    let mut app = App::new(cli.auth_token);
+    let mut app = App::new(cli.auth_token, cli.endpoint);
 
     // Find dashboards path
     let dashboards_path = find_dashboards_path(cli.dashboards.as_deref());

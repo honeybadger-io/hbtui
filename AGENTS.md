@@ -33,6 +33,7 @@ hbtui --version
 | `HONEYBADGER_PROJECT_ID` | `-p, --project-id` | Honeybadger project ID (required) |
 | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | `--auth-token` | API auth token (required) |
 | `HONEYBADGER_DASHBOARDS` | `-d, --dashboards` | Dashboard file or directory |
+| `HONEYBADGER_ENDPOINT` | `--endpoint` | API endpoint (default: https://app.honeybadger.io) |
 
 ### Dashboard Locations
 

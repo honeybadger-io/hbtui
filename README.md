@@ -46,13 +46,22 @@ hbtui -p 12345 -d ./dashboards/
 
 ### Options
 
-| Flag               | Env Variable                      | Description                       |
-| ------------------ | --------------------------------- | --------------------------------- |
-| `-p, --project-id` | `HONEYBADGER_PROJECT_ID`          | Honeybadger project ID (required) |
-| `--auth-token`     | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | API auth token (required)         |
-| `-d, --dashboards` | `HONEYBADGER_DASHBOARDS`          | Dashboard file or directory       |
-| `-h, --help`       |                                   | Print help                        |
-| `-V, --version`    |                                   | Print version                     |
+| Flag               | Env Variable                      | Description                                        |
+| ------------------ | --------------------------------- | -------------------------------------------------- |
+| `-p, --project-id` | `HONEYBADGER_PROJECT_ID`          | Honeybadger project ID (required)                  |
+| `--auth-token`     | `HONEYBADGER_PERSONAL_AUTH_TOKEN` | API auth token (required)                          |
+| `-d, --dashboards` | `HONEYBADGER_DASHBOARDS`          | Dashboard file or directory                        |
+| `--endpoint`       | `HONEYBADGER_ENDPOINT`            | API endpoint (default: https://app.honeybadger.io) |
+| `-h, --help`       |                                   | Print help                                         |
+| `-V, --version`    |                                   | Print version                                      |
+
+#### EU Region
+
+If your Honeybadger account is in the [EU region](https://docs.honeybadger.io/resources/data-residency/), use:
+
+```bash
+hbtui -p 12345 --endpoint https://eu-app.honeybadger.io
+```
 
 Dashboards display the last 3 hours of data (`PT3H`).
 

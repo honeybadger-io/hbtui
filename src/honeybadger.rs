@@ -7,6 +7,7 @@ use crate::dashboard::InsightsResponse;
 #[derive(Debug, Clone)]
 pub struct HoneybadgerClient {
     auth_token: String,
+    base_url: String,
     client: reqwest::Client,
 }
 
@@ -23,7 +24,7 @@ pub struct Project {
 
 
 impl HoneybadgerClient {
-    pub fn new(auth_token: String) -> Self {
+    pub fn new(auth_token: String, endpoint: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -31,6 +32,7 @@ impl HoneybadgerClient {
 
         Self {
             auth_token,
+            base_url: endpoint,
             client,
         }
     }
@@ -38,7 +40,7 @@ impl HoneybadgerClient {
     // Kept for API parsing tests - not used in production code
     #[allow(dead_code)]
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
-        let url = "https://app.honeybadger.io/v2/projects";
+        let url = format!("{}/v2/projects", self.base_url);
         let response = self
             .client
             .get(url)
@@ -64,8 +66,8 @@ impl HoneybadgerClient {
         query: &str,
     ) -> Result<InsightsResponse> {
         let url = format!(
-            "https://app.honeybadger.io/v2/projects/{}/insights/queries",
-            project_id
+            "{}/v2/projects/{}/insights/queries",
+            self.base_url, project_id
         );
 
         let body = serde_json::json!({
@@ -109,9 +111,13 @@ mod tests {
     #[test]
     fn test_client_has_timeout() {
         // Test that the client is configured with a timeout
-        let client = HoneybadgerClient::new("test_token".to_string());
+        let client = HoneybadgerClient::new(
+            "test_token".to_string(),
+            "https://app.honeybadger.io".to_string(),
+        );
         // We can't directly inspect the timeout, but we can verify the client was created
         assert_eq!(client.auth_token, "test_token");
+        assert_eq!(client.base_url, "https://app.honeybadger.io");
     }
 
     #[test]

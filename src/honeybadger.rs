@@ -10,6 +10,8 @@ pub struct HoneybadgerClient {
     client: reqwest::Client,
 }
 
+// Kept for deserialization tests - not used in production code
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: u64,
@@ -18,13 +20,7 @@ pub struct Project {
     pub unresolved_fault_count: u64,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProjectStats {
-    pub total_projects: usize,
-    pub total_faults: u64,
-    pub unresolved_faults: u64,
-    pub recent_projects: Vec<Project>,
-}
+
 
 impl HoneybadgerClient {
     pub fn new(auth_token: String) -> Self {
@@ -39,6 +35,8 @@ impl HoneybadgerClient {
         }
     }
 
+    // Kept for API parsing tests - not used in production code
+    #[allow(dead_code)]
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let url = "https://app.honeybadger.io/v2/projects";
         let response = self
@@ -57,26 +55,6 @@ impl HoneybadgerClient {
 
         let projects: Vec<Project> = response.json().await?;
         Ok(projects)
-    }
-
-    pub async fn get_project_stats(&self) -> Result<ProjectStats> {
-        let projects = self.list_projects().await?;
-        let total_projects = projects.len();
-
-        let mut total_faults = 0u64;
-        let mut unresolved_faults = 0u64;
-
-        for project in &projects {
-            total_faults += project.fault_count;
-            unresolved_faults += project.unresolved_fault_count;
-        }
-
-        Ok(ProjectStats {
-            total_projects,
-            total_faults,
-            unresolved_faults,
-            recent_projects: projects,
-        })
     }
 
     /// Execute an Insights query for a specific project

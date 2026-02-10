@@ -27,6 +27,15 @@ use honeybadger::HoneybadgerClient;
 use layout::{find_adjacent_widget, GridLayout, NavDirection};
 use widgets::{render_widget, render_maximized_widget};
 
+/// Validate project_id CLI argument
+fn validate_project_id(s: &str) -> Result<u64, String> {
+    let id: u64 = s.parse().map_err(|_| "Project ID must be a number")?;
+    if id == 0 {
+        return Err("Project ID must be greater than 0".to_string());
+    }
+    Ok(id)
+}
+
 /// Terminal user interface for Honeybadger.io
 #[derive(Parser, Debug)]
 #[command(name = "hbtui")]
@@ -34,7 +43,7 @@ use widgets::{render_widget, render_maximized_widget};
 #[command(about = "Terminal dashboard for Honeybadger.io", long_about = None)]
 struct Cli {
     /// Honeybadger project ID
-    #[arg(short, long, env = "HONEYBADGER_PROJECT_ID")]
+    #[arg(short, long, env = "HONEYBADGER_PROJECT_ID", value_parser = validate_project_id)]
     project_id: u64,
 
     /// Dashboard file or directory containing YAML files

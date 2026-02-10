@@ -147,6 +147,21 @@ cargo clippy         # Lint
 cargo fmt            # Format
 ```
 
+## Releasing
+
+Releases are automated via [cargo-dist](https://opensource.axo.dev/cargo-dist/). To create a release:
+
+```bash
+git tag v0.1.0
+git push origin main --tags
+```
+
+This will:
+- Build binaries for macOS (Intel + ARM), Linux, and Windows
+- Create a GitHub Release with all artifacts
+- Generate shell installer script
+- Update the Homebrew tap
+
 ## License
 
 MIT

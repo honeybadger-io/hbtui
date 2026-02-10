@@ -1,6 +1,6 @@
 # hbtui
 
-A terminal dashboard for [Honeybadger.io](https://www.honeybadger.io), built with Rust.
+A terminal dashboard for [Honeybadger Insights](https://docs.honeybadger.io/guides/insights/), built with Rust. Query and visualize your application data—errors, performance, logs, custom events—right from your command line.
 
 ![hbtui screenshot](demo.gif)
 
@@ -164,6 +164,7 @@ git push origin main --tags
 ```
 
 This will:
+
 - Build binaries for macOS (Intel + ARM), Linux, and Windows
 - Create a GitHub Release with all artifacts
 - Generate shell installer script

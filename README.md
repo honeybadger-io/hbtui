@@ -54,6 +54,8 @@ hbtui -p 12345 -d ./dashboards/
 | `-h, --help`       |                                   | Print help                        |
 | `-V, --version`    |                                   | Print version                     |
 
+Dashboards display the last 3 hours of data (`PT3H`).
+
 ### Dashboard Locations
 
 If `-d` is not specified, hbtui looks for dashboards in order:

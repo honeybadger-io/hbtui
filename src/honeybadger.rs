@@ -27,6 +27,7 @@ impl HoneybadgerClient {
     pub fn new(auth_token: String, endpoint: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .user_agent(format!("hbtui/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("Failed to build HTTP client");
 

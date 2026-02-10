@@ -123,7 +123,7 @@ impl App {
         for entry in entries {
             let file_path = entry.path();
             let content = std::fs::read_to_string(&file_path)?;
-            let dashboard: Dashboard = serde_yaml::from_str(&content)?;
+            let dashboard: Dashboard = serde_yml::from_str(&content)?;
 
             // Extract display name from filename (capitalize first letter)
             let name = file_path
@@ -149,7 +149,7 @@ impl App {
     /// Load dashboard from a single YAML file (legacy support)
     fn load_dashboard(&mut self, path: &str, project_id: u64) -> Result<()> {
         let content = std::fs::read_to_string(path)?;
-        let dashboard: Dashboard = serde_yaml::from_str(&content)?;
+        let dashboard: Dashboard = serde_yml::from_str(&content)?;
 
         // Extract name from path
         let name = std::path::Path::new(path)

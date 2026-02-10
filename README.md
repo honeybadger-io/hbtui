@@ -12,9 +12,21 @@ A terminal dashboard for [Honeybadger.io](https://www.honeybadger.io), built wit
 cargo install --path .
 ```
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install honeybadger-io/tap/hbtui
+```
+
+### Shell installer (macOS/Linux)
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/honeybadger-io/hbtui/releases/latest/download/hbtui-installer.sh | sh
+```
+
 ### Pre-built binaries
 
-Coming soon.
+Download from [GitHub Releases](https://github.com/honeybadger-io/hbtui/releases).
 
 ## Usage
 

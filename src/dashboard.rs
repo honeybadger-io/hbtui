@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Dashboard {
+    // TODO: Use this field for display or remove if not needed by YAML spec
+    #[allow(dead_code)]
     pub title: String,
     pub widgets: Vec<Widget>,
 }
@@ -14,6 +16,8 @@ pub struct Dashboard {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Widget {
     pub id: String,
+    // TODO: Use this field for widget type validation or remove if not needed
+    #[allow(dead_code)]
     #[serde(rename = "type")]
     pub widget_type: String,
     pub grid: GridPosition,
@@ -34,6 +38,8 @@ pub struct GridPosition {
 pub struct WidgetPresentation {
     #[serde(default)]
     pub title: String,
+    // TODO: Display subtitle in widget header or remove if not needed
+    #[allow(dead_code)]
     #[serde(default)]
     pub subtitle: String,
 }
@@ -44,6 +50,8 @@ pub struct WidgetConfig {
     pub query: String,
     #[serde(default)]
     pub vis: VisualizationConfig,
+    // TODO: Use streams field for real-time data or remove if not needed
+    #[allow(dead_code)]
     #[serde(default)]
     pub streams: Vec<String>,
 }
@@ -58,6 +66,8 @@ pub struct VisualizationConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ChartConfig {
+    // TODO: Use groups for custom series colors or remove if not needed
+    #[allow(dead_code)]
     #[serde(default)]
     pub groups: HashMap<String, GroupConfig>,
     #[serde(rename = "xField")]
@@ -66,6 +76,8 @@ pub struct ChartConfig {
     pub y_field: Option<String>,
     #[serde(rename = "zField")]
     pub z_field: Option<String>,
+    // TODO: Use group_type for chart rendering logic or remove if not needed
+    #[allow(dead_code)]
     #[serde(rename = "groupType")]
     pub group_type: Option<String>,
     #[serde(rename = "xFieldUnit")]
@@ -81,6 +93,8 @@ pub struct ChartConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GroupConfig {
+    // TODO: Use color for custom series rendering or remove if not needed
+    #[allow(dead_code)]
     pub color: Option<String>,
 }
 
@@ -150,6 +164,8 @@ pub struct WidgetRuntime {
 
 #[derive(Debug, Clone)]
 pub struct DashboardState {
+    // TODO: Use dashboard for metadata display or remove if redundant with widgets
+    #[allow(dead_code)]
     pub dashboard: Dashboard,
     pub widgets: Vec<WidgetRuntime>,
     pub project_id: u64,

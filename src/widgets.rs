@@ -3,14 +3,23 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, GraphType, LegendPosition, Paragraph, Row, Table},
+    widgets::{
+        Axis, Bar, BarChart, BarGroup, Block, Borders, Cell, Chart, Dataset, GraphType,
+        LegendPosition, Paragraph, Row, Table,
+    },
     Frame,
 };
 
 use crate::dashboard::{ChartConfig, InsightsResponse, WidgetRuntime, WidgetState};
 
 /// Standard colors for chart series
-const SERIES_COLORS: [Color; 5] = [Color::Cyan, Color::Yellow, Color::Green, Color::Magenta, Color::Red];
+const SERIES_COLORS: [Color; 5] = [
+    Color::Cyan,
+    Color::Yellow,
+    Color::Green,
+    Color::Magenta,
+    Color::Red,
+];
 
 /// Convert unit name to short suffix
 fn format_unit_suffix(unit: Option<&str>) -> &str {
@@ -125,10 +134,7 @@ fn render_table(f: &mut Frame, block: Block, response: &InsightsResponse, area: 
             let cells: Vec<Cell> = fields
                 .iter()
                 .map(|field| {
-                    let value = row
-                        .get(field)
-                        .map(|v| format_json_value(v))
-                        .unwrap_or_default();
+                    let value = row.get(field).map(format_json_value).unwrap_or_default();
                     Cell::from(value)
                 })
                 .collect();
@@ -173,14 +179,18 @@ fn render_line_chart(
     let y_unit = format_unit_suffix(config.y_field_unit.as_deref());
 
     // Collect data points and x labels, grouped by z_field if present
-    let mut series: std::collections::HashMap<String, Vec<(f64, f64)>> = std::collections::HashMap::new();
+    let mut series: std::collections::HashMap<String, Vec<(f64, f64)>> =
+        std::collections::HashMap::new();
     let mut x_labels_raw: Vec<String> = Vec::new();
 
     for (i, row) in response.results.iter().enumerate() {
         let x = i as f64;
         let y = row
             .get(y_field)
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(0.0);
 
         // Collect x labels from the first series we encounter
@@ -188,7 +198,7 @@ fn render_line_chart(
             let label = format_json_value(x_val);
             // Extract just the time portion if it's a timestamp
             let short_label = if label.contains(' ') {
-                label.split(' ').last().unwrap_or(&label).to_string()
+                label.split(' ').next_back().unwrap_or(&label).to_string()
             } else {
                 label
             };
@@ -199,7 +209,7 @@ fn render_line_chart(
 
         let group = z_field
             .and_then(|zf| row.get(zf))
-            .map(|v| format_json_value(v))
+            .map(format_json_value)
             .unwrap_or_else(|| y_field.to_string());
 
         series.entry(group).or_default().push((x, y));
@@ -215,10 +225,20 @@ fn render_line_chart(
 
     // Find bounds
     let all_points: Vec<&(f64, f64)> = series.values().flat_map(|v| v.iter()).collect();
-    let x_min = all_points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
-    let x_max = all_points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
+    let x_min = all_points
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::INFINITY, f64::min);
+    let x_max = all_points
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::NEG_INFINITY, f64::max);
     let y_min = 0.0;
-    let y_max = all_points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max) * 1.1;
+    let y_max = all_points
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max)
+        * 1.1;
 
     // Generate Y-axis labels (5 values from min to max)
     let y_labels: Vec<Span> = (0..=4)
@@ -248,9 +268,18 @@ fn render_line_chart(
     // Sort series by average value descending (highest first), then by name for stability
     let mut sorted_series: Vec<_> = series.into_iter().collect();
     sorted_series.sort_by(|a, b| {
-        let avg_a = if a.1.is_empty() { 0.0 } else { a.1.iter().map(|(_, y)| y).sum::<f64>() / a.1.len() as f64 };
-        let avg_b = if b.1.is_empty() { 0.0 } else { b.1.iter().map(|(_, y)| y).sum::<f64>() / b.1.len() as f64 };
-        avg_b.partial_cmp(&avg_a)
+        let avg_a = if a.1.is_empty() {
+            0.0
+        } else {
+            a.1.iter().map(|(_, y)| y).sum::<f64>() / a.1.len() as f64
+        };
+        let avg_b = if b.1.is_empty() {
+            0.0
+        } else {
+            b.1.iter().map(|(_, y)| y).sum::<f64>() / b.1.len() as f64
+        };
+        avg_b
+            .partial_cmp(&avg_a)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
@@ -333,11 +362,25 @@ pub fn render_histogram_with_filter(
         match series_filter {
             None => {
                 // Stacked histogram - all series in stacked bars
-                render_stacked_histogram(f, block, response, x_field, y_field, z, x_unit, area);
+                let params = HistogramRenderParams {
+                    response,
+                    x_field,
+                    y_field,
+                    z_field: z,
+                    x_unit,
+                };
+                render_stacked_histogram(f, block, params, area);
             }
             Some(idx) => {
                 // Filtered histogram - show only one series
-                render_filtered_histogram(f, block, response, x_field, y_field, z, x_unit, idx, area);
+                let params = HistogramRenderParams {
+                    response,
+                    x_field,
+                    y_field,
+                    z_field: z,
+                    x_unit,
+                };
+                render_filtered_histogram(f, block, params, idx, area);
             }
         }
     } else {
@@ -359,7 +402,7 @@ fn render_simple_histogram(
         .results
         .iter()
         .filter_map(|row| {
-            let x = row.get(x_field).map(|v| format_json_value(v))?;
+            let x = row.get(x_field).map(format_json_value)?;
             let y = row.get(y_field).and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
             let label_with_unit = format!("{}{}", x, x_unit);
             let label = if label_with_unit.len() > 8 {
@@ -398,6 +441,15 @@ struct HistogramData {
     data: std::collections::HashMap<(String, String), u64>,
 }
 
+/// Parameters for histogram rendering functions
+struct HistogramRenderParams<'a> {
+    response: &'a InsightsResponse,
+    x_field: &'a str,
+    y_field: &'a str,
+    z_field: &'a str,
+    x_unit: &'a str,
+}
+
 /// Collect and organize histogram data from response
 fn collect_histogram_data(
     response: &InsightsResponse,
@@ -406,13 +458,15 @@ fn collect_histogram_data(
     z_field: &str,
 ) -> HistogramData {
     let mut x_values: Vec<String> = Vec::new();
-    let mut series_stats: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
-    let mut data: std::collections::HashMap<(String, String), u64> = std::collections::HashMap::new();
+    let mut series_stats: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
+    let mut data: std::collections::HashMap<(String, String), u64> =
+        std::collections::HashMap::new();
 
     for row in &response.results {
-        let x = row.get(x_field).map(|v| format_json_value(v)).unwrap_or_default();
+        let x = row.get(x_field).map(format_json_value).unwrap_or_default();
         let y = row.get(y_field).and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let z = row.get(z_field).map(|v| format_json_value(v)).unwrap_or_default();
+        let z = row.get(z_field).map(format_json_value).unwrap_or_default();
 
         if !x_values.contains(&x) {
             x_values.push(x.clone());
@@ -426,9 +480,18 @@ fn collect_histogram_data(
     // Sort series by average value descending, then by name (matching legend sort order)
     let mut series: Vec<_> = series_stats.into_iter().collect();
     series.sort_by(|a, b| {
-        let avg_a = if a.1.1 == 0 { 0.0 } else { a.1.0 / a.1.1 as f64 };
-        let avg_b = if b.1.1 == 0 { 0.0 } else { b.1.0 / b.1.1 as f64 };
-        avg_b.partial_cmp(&avg_a)
+        let avg_a = if a.1 .1 == 0 {
+            0.0
+        } else {
+            a.1 .0 / a.1 .1 as f64
+        };
+        let avg_b = if b.1 .1 == 0 {
+            0.0
+        } else {
+            b.1 .0 / b.1 .1 as f64
+        };
+        avg_b
+            .partial_cmp(&avg_a)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
@@ -444,21 +507,26 @@ fn collect_histogram_data(
         }
     });
 
-    HistogramData { x_values, series_names, data }
+    HistogramData {
+        x_values,
+        series_names,
+        data,
+    }
 }
 
 /// Render a stacked histogram (all series stacked in each bar)
 fn render_stacked_histogram(
     f: &mut Frame,
     block: Block,
-    response: &InsightsResponse,
-    x_field: &str,
-    y_field: &str,
-    z_field: &str,
-    x_unit: &str,
+    params: HistogramRenderParams,
     area: Rect,
 ) {
-    let hist_data = collect_histogram_data(response, x_field, y_field, z_field);
+    let hist_data = collect_histogram_data(
+        params.response,
+        params.x_field,
+        params.y_field,
+        params.z_field,
+    );
 
     if hist_data.x_values.is_empty() || hist_data.series_names.is_empty() {
         let empty = Paragraph::new("No data")
@@ -487,12 +555,20 @@ fn render_stacked_histogram(
     };
 
     // Calculate totals for each x value and find max
-    let mut totals: Vec<(String, u64)> = hist_data.x_values
+    let mut totals: Vec<(String, u64)> = hist_data
+        .x_values
         .iter()
         .map(|x| {
-            let total: u64 = hist_data.series_names
+            let total: u64 = hist_data
+                .series_names
                 .iter()
-                .map(|z| hist_data.data.get(&(x.clone(), z.clone())).copied().unwrap_or(0))
+                .map(|z| {
+                    hist_data
+                        .data
+                        .get(&(x.clone(), z.clone()))
+                        .copied()
+                        .unwrap_or(0)
+                })
                 .sum();
             (x.clone(), total)
         })
@@ -522,12 +598,17 @@ fn render_stacked_histogram(
 
         // Reverse iterate series (draw bottom series first, which is highest-avg first)
         for (series_idx, series_name) in hist_data.series_names.iter().enumerate().rev() {
-            let value = hist_data.data.get(&(x_val.clone(), series_name.clone())).copied().unwrap_or(0);
+            let value = hist_data
+                .data
+                .get(&(x_val.clone(), series_name.clone()))
+                .copied()
+                .unwrap_or(0);
             if value == 0 {
                 continue;
             }
 
-            let segment_height = ((value as f64 / max_total as f64) * chart_height as f64).ceil() as u16;
+            let segment_height =
+                ((value as f64 / max_total as f64) * chart_height as f64).ceil() as u16;
             let segment_height = segment_height.min(current_y.saturating_sub(chart_area.y));
 
             if segment_height == 0 {
@@ -560,16 +641,22 @@ fn render_stacked_histogram(
             for (i, ch) in value_str.chars().enumerate() {
                 let x = value_x + i as u16;
                 if x < chart_area.x + chart_area.width {
-                    buf[(x, value_y.saturating_sub(1))].set_char(ch).set_fg(Color::White);
+                    buf[(x, value_y.saturating_sub(1))]
+                        .set_char(ch)
+                        .set_fg(Color::White);
                 }
             }
         }
 
         // Draw x-axis label
-        let label = format!("{}{}", x_val, x_unit);
+        let label = format!("{}{}", x_val, params.x_unit);
         let label_y = inner.y + inner.height - 1;
         let label_x = bar_x;
-        for (i, ch) in label.chars().take(bar_width as usize + gap as usize) .enumerate() {
+        for (i, ch) in label
+            .chars()
+            .take(bar_width as usize + gap as usize)
+            .enumerate()
+        {
             let x = label_x + i as u16;
             if x < inner.x + inner.width {
                 buf[(x, label_y)].set_char(ch).set_fg(Color::DarkGray);
@@ -582,15 +669,16 @@ fn render_stacked_histogram(
 fn render_filtered_histogram(
     f: &mut Frame,
     block: Block,
-    response: &InsightsResponse,
-    x_field: &str,
-    y_field: &str,
-    z_field: &str,
-    x_unit: &str,
+    params: HistogramRenderParams,
     series_index: usize,
     area: Rect,
 ) {
-    let hist_data = collect_histogram_data(response, x_field, y_field, z_field);
+    let hist_data = collect_histogram_data(
+        params.response,
+        params.x_field,
+        params.y_field,
+        params.z_field,
+    );
 
     if hist_data.x_values.is_empty() || series_index >= hist_data.series_names.len() {
         let empty = Paragraph::new("No data")
@@ -604,13 +692,25 @@ fn render_filtered_histogram(
     let color = SERIES_COLORS[series_index % SERIES_COLORS.len()];
 
     // Build bars for just this series
-    let bars: Vec<Bar> = hist_data.x_values
+    let bars: Vec<Bar> = hist_data
+        .x_values
         .iter()
-        .filter_map(|x| {
-            let value = hist_data.data.get(&(x.clone(), series_name.clone())).copied().unwrap_or(0);
-            let label = format!("{}{}", x, x_unit);
-            let label = if label.len() > 6 { label[..6].to_string() } else { label };
-            Some(Bar::default().label(label.into()).value(value).style(Style::default().fg(color)))
+        .map(|x| {
+            let value = hist_data
+                .data
+                .get(&(x.clone(), series_name.clone()))
+                .copied()
+                .unwrap_or(0);
+            let label = format!("{}{}", x, params.x_unit);
+            let label = if label.len() > 6 {
+                label[..6].to_string()
+            } else {
+                label
+            };
+            Bar::default()
+                .label(label.into())
+                .value(value)
+                .style(Style::default().fg(color))
         })
         .take((area.width.saturating_sub(4) / 6) as usize)
         .collect();
@@ -658,11 +758,11 @@ fn render_billboard(
         .map(|row| {
             let title = row
                 .get(title_field)
-                .map(|v| format_json_value(v))
+                .map(format_json_value)
                 .unwrap_or_default();
             let value = row
                 .get(value_field)
-                .map(|v| format_json_value(v))
+                .map(format_json_value)
                 .unwrap_or_default();
             (title, value)
         })
@@ -791,17 +891,21 @@ pub fn extract_series_names(response: &InsightsResponse, config: &ChartConfig) -
     }
 
     // Collect series with their y-values (sum and count for averaging)
-    let mut series_stats: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
+    let mut series_stats: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
 
     for row in &response.results {
         let group = z_field
             .and_then(|zf| row.get(zf))
-            .map(|v| format_json_value(v))
+            .map(format_json_value)
             .unwrap_or_else(|| y_field.to_string());
 
         let y = row
             .get(y_field)
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(0.0);
 
         let entry = series_stats.entry(group).or_insert((0.0, 0));
@@ -812,9 +916,18 @@ pub fn extract_series_names(response: &InsightsResponse, config: &ChartConfig) -
     // Sort by average value descending, then by name for stability
     let mut sorted: Vec<_> = series_stats.into_iter().collect();
     sorted.sort_by(|a, b| {
-        let avg_a = if a.1.1 == 0 { 0.0 } else { a.1.0 / a.1.1 as f64 };
-        let avg_b = if b.1.1 == 0 { 0.0 } else { b.1.0 / b.1.1 as f64 };
-        avg_b.partial_cmp(&avg_a)
+        let avg_a = if a.1 .1 == 0 {
+            0.0
+        } else {
+            a.1 .0 / a.1 .1 as f64
+        };
+        let avg_b = if b.1 .1 == 0 {
+            0.0
+        } else {
+            b.1 .0 / b.1 .1 as f64
+        };
+        avg_b
+            .partial_cmp(&avg_a)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
@@ -829,62 +942,13 @@ pub fn extract_series_names(response: &InsightsResponse, config: &ChartConfig) -
     names
 }
 
-/// Render the legend for a line chart with colored squares
-fn render_legend(f: &mut Frame, series_names: &[String], area: Rect) {
-    if series_names.is_empty() || area.height < 1 {
-        return;
-    }
-
-    // Build spans with colored squares and names
-    let mut spans: Vec<Span> = Vec::new();
-    for (i, name) in series_names.iter().enumerate() {
-        let color = SERIES_COLORS[i % SERIES_COLORS.len()];
-        // Add spacing between entries
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        // Colored square (using a filled block character)
-        spans.push(Span::styled("■ ", Style::default().fg(color)));
-        // Series name
-        spans.push(Span::raw(name.clone()));
-    }
-
-    // Wrap into lines if needed (simple wrapping based on terminal width)
-    let mut lines: Vec<Line> = Vec::new();
-    let mut current_spans: Vec<Span> = Vec::new();
-    let mut current_width: usize = 0;
-    let max_width = area.width.saturating_sub(2) as usize;
-
-    for (i, name) in series_names.iter().enumerate() {
-        let color = SERIES_COLORS[i % SERIES_COLORS.len()];
-        let entry_width = 2 + name.len() + 2; // "■ " + name + "  "
-
-        if current_width + entry_width > max_width && !current_spans.is_empty() {
-            lines.push(Line::from(current_spans));
-            current_spans = Vec::new();
-            current_width = 0;
-        }
-
-        if !current_spans.is_empty() {
-            current_spans.push(Span::raw("  "));
-            current_width += 2;
-        }
-        current_spans.push(Span::styled("■ ", Style::default().fg(color)));
-        current_spans.push(Span::raw(name.clone()));
-        current_width += 2 + name.len();
-    }
-
-    if !current_spans.is_empty() {
-        lines.push(Line::from(current_spans));
-    }
-
-    let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::TOP));
-    f.render_widget(paragraph, area);
-}
-
 /// Render legend with optional highlight for selected series
-fn render_legend_with_highlight(f: &mut Frame, series_names: &[String], area: Rect, highlight: Option<usize>) {
+fn render_legend_with_highlight(
+    f: &mut Frame,
+    series_names: &[String],
+    area: Rect,
+    highlight: Option<usize>,
+) {
     if series_names.is_empty() || area.height < 1 {
         return;
     }
@@ -914,7 +978,9 @@ fn render_legend_with_highlight(f: &mut Frame, series_names: &[String], area: Re
         // Use bold/underline for highlighted series, dim for others when filtering
         let square_style = Style::default().fg(color);
         let name_style = if is_highlighted {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
         } else if highlight.is_some() {
             Style::default().fg(Color::DarkGray)
         } else {
@@ -930,8 +996,7 @@ fn render_legend_with_highlight(f: &mut Frame, series_names: &[String], area: Re
         lines.push(Line::from(current_spans));
     }
 
-    let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::TOP));
+    let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::TOP));
     f.render_widget(paragraph, area);
 }
 
@@ -983,10 +1048,7 @@ pub fn render_maximized_widget(
     let (chart_area, legend_area) = if legend_height > 0 {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(10),
-                Constraint::Length(legend_height),
-            ])
+            .constraints([Constraint::Min(10), Constraint::Length(legend_height)])
             .split(area);
         (chunks[0], Some(chunks[1]))
     } else {
@@ -1012,7 +1074,14 @@ pub fn render_maximized_widget(
             match view_type.as_str() {
                 "table" => render_table(f, block, response, chart_area),
                 "line" => render_line_chart(f, block, response, chart_config, chart_area),
-                "histogram" => render_histogram_with_filter(f, block, response, chart_config, chart_area, histogram_series_filter),
+                "histogram" => render_histogram_with_filter(
+                    f,
+                    block,
+                    response,
+                    chart_config,
+                    chart_area,
+                    histogram_series_filter,
+                ),
                 "billboard" => render_billboard(f, block, response, chart_config, chart_area),
                 _ => render_table(f, block, response, chart_area),
             }

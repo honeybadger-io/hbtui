@@ -259,12 +259,10 @@ impl App {
                     } else {
                         Some(idx - 1)
                     }
+                } else if idx >= series_count - 1 {
+                    None // Wrap from last to All
                 } else {
-                    if idx >= series_count - 1 {
-                        None // Wrap from last to All
-                    } else {
-                        Some(idx + 1)
-                    }
+                    Some(idx + 1)
                 }
             }
         };

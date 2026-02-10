@@ -1,100 +1,135 @@
 # AGENTS.md
 
-This file provides guidance to agents (like Claude Code and GitHub Copilot) when working with code in this repository.
+This file provides guidance to AI coding agents when working with this repository.
 
 ## Project Overview
 
-This is a terminal user interface (TUI) application for Honeybadger.io, built with Ratatui (Rust). The first feature is a simple dashboard showing project statistics and fault counts.
+A terminal dashboard for Honeybadger.io, built with Ratatui (Rust). Displays configurable dashboard widgets powered by the Honeybadger Insights API.
+
+## CLI Usage
+
+```bash
+# Required: project ID and auth token
+hbtui -p <PROJECT_ID> --auth-token <TOKEN>
+
+# Or via environment variables
+HONEYBADGER_PROJECT_ID=12345 \
+HONEYBADGER_PERSONAL_AUTH_TOKEN=xxx \
+hbtui
+
+# Custom dashboard file or directory
+hbtui -p 12345 -d ./my-dashboard.yml
+hbtui -p 12345 -d ./dashboards/
+
+# Help and version
+hbtui --help
+hbtui --version
+```
+
+### Environment Variables
+
+| Variable | CLI Flag | Description |
+|----------|----------|-------------|
+| `HONEYBADGER_PROJECT_ID` | `-p, --project-id` | Honeybadger project ID (required) |
+| `HONEYBADGER_PERSONAL_AUTH_TOKEN` | `--auth-token` | API auth token (required) |
+| `HONEYBADGER_DASHBOARDS` | `-d, --dashboards` | Dashboard file or directory (default: `./dashboards`) |
 
 ## Development Commands
 
-**Build the project:**
-
 ```bash
-cargo build
+cargo build          # Build
+cargo run -- --help  # Run with args
+cargo test           # Run tests (16 tests)
+cargo clippy         # Lint (should be 0 warnings)
+cargo fmt            # Format
 ```
 
-**Run the application:**
+## Key Bindings
 
-```bash
-HONEYBADGER_PERSONAL_AUTH_TOKEN=your_api_key cargo run
-```
-
-**Run in development with auto-reload:**
-
-```bash
-HONEYBADGER_PERSONAL_AUTH_TOKEN=your_api_key cargo watch -x run
-```
-
-**Check code without building:**
-
-```bash
-cargo check
-```
-
-**Run tests:**
-
-```bash
-cargo test
-```
-
-**Format code:**
-
-```bash
-cargo fmt
-```
-
-**Run linter:**
-
-```bash
-cargo clippy
-```
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `r` | Refresh current dashboard |
+| `[` / `]` | Previous / next dashboard |
+| `1-9` | Jump to dashboard by number |
+| Arrow keys | Navigate widgets |
+| `Enter` | Maximize selected widget |
+| `Esc` | Exit maximized view |
+| Up/Down (maximized histogram) | Filter by series |
 
 ## Architecture
 
 ### Module Structure
 
-- **src/main.rs** - Main application entry point and TUI rendering logic
-  - Sets up Crossterm terminal backend with raw mode and alternate screen
-  - Contains the main `App` struct that holds application state (client, stats, quit flag)
-  - Event loop polls for keyboard input every 100ms
-  - Key bindings: 'q' to quit, 'r' to refresh data
-  - UI layout: header, split main content area (stats on left, projects list on right), footer
-
-- **src/honeybadger.rs** - Honeybadger API client implementation
-  - `HoneybadgerClient` handles all API communication using reqwest
-  - Authentication via Bearer token in Authorization header
-  - Implements `list_projects()` and `get_fault_counts(project_id)` API calls
-  - `get_project_stats()` aggregates data from multiple API calls (fetches first 10 projects only to avoid rate limiting)
-  - Returns `ProjectStats` with totals and enriched project list
+- **src/main.rs** - CLI parsing (clap), terminal setup, event loop, UI rendering
+- **src/honeybadger.rs** - API client with 30s timeout, Insights query support
+- **src/dashboard.rs** - Dashboard YAML parsing, widget state management
+- **src/layout.rs** - 12-column grid layout, widget navigation
+- **src/widgets.rs** - Widget rendering (line charts, histograms, tables, billboards)
 
 ### Application Flow
 
-1. Application reads `HONEYBADGER_PERSONAL_AUTH_TOKEN` from environment variable (required)
-2. Terminal is initialized with Crossterm backend in raw mode with alternate screen
-3. Initial data load fetches project stats asynchronously using Tokio runtime
-4. Main event loop renders UI and polls for keyboard events
-5. On exit, terminal is properly restored (raw mode disabled, alternate screen cleared)
+1. Parse CLI args (clap) - project ID and auth token required
+2. Load dashboards from file or directory
+3. Validate at least one dashboard exists (exit with error if not)
+4. Initialize terminal (raw mode, alternate screen)
+5. Spawn async tasks to fetch widget data via Insights API
+6. Event loop: render UI, poll keyboard, process API responses
+7. Restore terminal on exit
+
+### Dashboard Format
+
+Dashboards are YAML files with widgets positioned on a 12-column grid:
+
+```yaml
+title: My Dashboard
+widgets:
+  - id: requests
+    type: insights
+    grid: { x: 0, y: 0, w: 6, h: 2 }
+    presentation:
+      title: Requests
+    config:
+      query: |
+        SELECT count(*) as count, bin(ts, 1h) as time
+        FROM requests
+        GROUP BY time
+      vis:
+        view: line  # or: histogram, table, billboard
+        chart_config:
+          xField: time
+          yField: count
+```
 
 ### Key Dependencies
 
-- **ratatui 0.29** - TUI framework for rendering
-- **crossterm 0.28** - Terminal manipulation (raw mode, events, etc.)
-- **tokio 1.x** - Async runtime with full features
-- **reqwest 0.12** - HTTP client with JSON support for API calls
-- **serde/serde_json** - JSON serialization/deserialization
+- **ratatui 0.29** - TUI framework
+- **crossterm 0.28** - Terminal backend
+- **clap 4** - CLI argument parsing
+- **tokio 1** - Async runtime
+- **reqwest 0.12** - HTTP client (30s timeout)
+- **serde_yaml** - Dashboard YAML parsing
 
-### Data Model
+## Honeybadger API
 
-- `Project`: ID, name, and fault_count (enriched from API)
-- `ProjectStats`: Aggregated view with total_projects, total_faults, unresolved_faults, and recent_projects list
-- API responses are deserialized into internal structs (`ProjectsResponse`, `FaultCountsResponse`)
+Uses the Insights API for widget queries:
 
-## Honeybadger API Integration
+```
+POST /v2/projects/{id}/insights/queries
+Authorization: Basic base64(token:)
+Content-Type: application/json
 
-The application uses Honeybadger's V2 API with endpoints:
+{"query": "SELECT ..."}
+```
 
-- `GET /v2/projects` - List all projects
-- `GET /v2/projects/{id}/fault_counts` - Get fault counts for a specific project
+## Testing
 
-All requests require Bearer authentication with the API key.
+```bash
+cargo test  # 16 tests across honeybadger and layout modules
+```
+
+Tests cover:
+- API response parsing (honeybadger)
+- Client timeout configuration
+- Widget navigation logic (layout)
+- Grid calculations

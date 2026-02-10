@@ -1,4 +1,5 @@
 use anyhow::Result;
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -24,6 +25,25 @@ use dashboard::{Dashboard, DashboardState, WidgetState};
 use honeybadger::HoneybadgerClient;
 use layout::{find_adjacent_widget, GridLayout, NavDirection};
 use widgets::{render_widget, render_maximized_widget};
+
+/// Terminal user interface for Honeybadger.io
+#[derive(Parser, Debug)]
+#[command(name = "hbtui")]
+#[command(version)]
+#[command(about = "Terminal dashboard for Honeybadger.io", long_about = None)]
+struct Cli {
+    /// Honeybadger project ID
+    #[arg(short, long, env = "HONEYBADGER_PROJECT_ID")]
+    project_id: u64,
+
+    /// Directory containing dashboard YAML files
+    #[arg(short = 'd', long, default_value = "./dashboards")]
+    dashboard_dir: String,
+
+    /// Honeybadger personal auth token
+    #[arg(long, env = "HONEYBADGER_PERSONAL_AUTH_TOKEN")]
+    auth_token: String,
+}
 
 /// Message type for async widget updates
 #[derive(Debug)]
@@ -295,15 +315,8 @@ impl App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Read auth token from environment
-    let auth_token = std::env::var("HONEYBADGER_PERSONAL_AUTH_TOKEN")
-        .expect("HONEYBADGER_PERSONAL_AUTH_TOKEN environment variable not set");
-
-    // Project ID (default or from env)
-    let project_id: u64 = std::env::var("HONEYBADGER_PROJECT_ID")
-        .unwrap_or_else(|_| "121229".to_string())
-        .parse()
-        .expect("Invalid HONEYBADGER_PROJECT_ID");
+    // Parse CLI arguments
+    let cli = Cli::parse();
 
     // Setup terminal
     enable_raw_mode()?;
@@ -313,12 +326,11 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app
-    let mut app = App::new(auth_token);
+    let mut app = App::new(cli.auth_token);
 
-    // Try to load dashboards from ./dashboards/ directory first
-    let dashboards_dir = "./dashboards";
-    if std::path::Path::new(dashboards_dir).is_dir() {
-        if let Err(e) = app.load_dashboards_from_dir(dashboards_dir, project_id) {
+    // Try to load dashboards from configured directory
+    if std::path::Path::new(&cli.dashboard_dir).is_dir() {
+        if let Err(e) = app.load_dashboards_from_dir(&cli.dashboard_dir, cli.project_id) {
             eprintln!("Failed to load dashboards: {}", e);
         }
     }
@@ -329,7 +341,7 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| "rails_dashboard.yml".to_string());
 
         if std::path::Path::new(&dashboard_path).exists() {
-            if let Err(e) = app.load_dashboard(&dashboard_path, project_id) {
+            if let Err(e) = app.load_dashboard(&dashboard_path, cli.project_id) {
                 eprintln!("Failed to load dashboard: {}", e);
             }
         }

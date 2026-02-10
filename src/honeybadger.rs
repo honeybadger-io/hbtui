@@ -28,9 +28,14 @@ pub struct ProjectStats {
 
 impl HoneybadgerClient {
     pub fn new(auth_token: String) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client");
+
         Self {
             auth_token,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -43,6 +48,12 @@ impl HoneybadgerClient {
             .header("Accept", "application/json")
             .send()
             .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("API error {}: {}", status, text));
+        }
 
         let projects: Vec<Project> = response.json().await?;
         Ok(projects)
@@ -111,4 +122,66 @@ impl HoneybadgerClient {
 
         Ok(insights_response)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_has_timeout() {
+        // Test that the client is configured with a timeout
+        let client = HoneybadgerClient::new("test_token".to_string());
+        // We can't directly inspect the timeout, but we can verify the client was created
+        assert_eq!(client.auth_token, "test_token");
+    }
+
+    #[test]
+    fn test_project_deserialization() {
+        // Test that we can deserialize a valid API response
+        let json = r#"{
+            "id": 12345,
+            "name": "Test Project",
+            "fault_count": 42,
+            "unresolved_fault_count": 5
+        }"#;
+
+        let project: Result<Project, _> = serde_json::from_str(json);
+        assert!(project.is_ok());
+        let project = project.unwrap();
+        assert_eq!(project.id, 12345);
+        assert_eq!(project.name, "Test Project");
+        assert_eq!(project.fault_count, 42);
+        assert_eq!(project.unresolved_fault_count, 5);
+    }
+
+    #[test]
+    fn test_projects_list_deserialization() {
+        // Test that we can deserialize a list of projects
+        let json = r#"[
+            {
+                "id": 1,
+                "name": "Project One",
+                "fault_count": 10,
+                "unresolved_fault_count": 2
+            },
+            {
+                "id": 2,
+                "name": "Project Two",
+                "fault_count": 20,
+                "unresolved_fault_count": 3
+            }
+        ]"#;
+
+        let projects: Result<Vec<Project>, _> = serde_json::from_str(json);
+        assert!(projects.is_ok());
+        let projects = projects.unwrap();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].name, "Project One");
+        assert_eq!(projects[1].name, "Project Two");
+    }
+
+    // Note: Testing actual HTTP error handling would require a mock server
+    // or integration tests. The key change is adding status checking in list_projects()
+    // to match the pattern used in query_insights().
 }

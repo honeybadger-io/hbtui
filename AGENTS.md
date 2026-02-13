@@ -116,7 +116,7 @@ widgets:
 - **clap 4** - CLI argument parsing
 - **tokio 1** - Async runtime
 - **reqwest 0.12** - HTTP client (30s timeout)
-- **serde_yaml** - Dashboard YAML parsing
+- **serde_yml** - Dashboard YAML parsing
 
 ## Honeybadger API
 

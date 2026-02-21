@@ -23,6 +23,7 @@ anyhow = "1.0"
 serde_yml = "0.0.12"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
+notify = "6.1"
 
 # The profile that 'dist' will build with
 [profile.dist]

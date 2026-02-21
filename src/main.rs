@@ -67,12 +67,16 @@ pub enum AppMessage {
         widget_id: String,
         result: Result<dashboard::InsightsResponse, String>,
     },
+    DashboardFileChanged {
+        path: PathBuf,
+    },
 }
 
 struct App {
     client: HoneybadgerClient,
     dashboards: Vec<DashboardState>,
     dashboard_names: Vec<String>,
+    dashboard_paths: Vec<PathBuf>,
     active_dashboard_index: usize,
     should_quit: bool,
     message_tx: mpsc::Sender<AppMessage>,
@@ -90,6 +94,7 @@ impl App {
             client: HoneybadgerClient::new(auth_token, endpoint),
             dashboards: Vec::new(),
             dashboard_names: Vec::new(),
+            dashboard_paths: Vec::new(),
             active_dashboard_index: 0,
             should_quit: false,
             message_tx: tx,
@@ -121,7 +126,7 @@ impl App {
         entries.sort_by_key(|e| e.file_name());
 
         for entry in entries {
-            let file_path = entry.path();
+            let file_path = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
             let content = std::fs::read_to_string(&file_path)?;
             let dashboard: Dashboard = serde_yml::from_str(&content)?;
 
@@ -139,6 +144,7 @@ impl App {
                 .unwrap_or_else(|| "Dashboard".to_string());
 
             self.dashboard_names.push(name);
+            self.dashboard_paths.push(file_path);
             self.dashboards
                 .push(DashboardState::new(dashboard, project_id));
         }
@@ -152,7 +158,8 @@ impl App {
         let dashboard: Dashboard = serde_yml::from_str(&content)?;
 
         // Extract name from path
-        let name = std::path::Path::new(path)
+        let path_buf = PathBuf::from(path).canonicalize().unwrap_or_else(|_| PathBuf::from(path));
+        let name = path_buf
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| {
@@ -165,6 +172,7 @@ impl App {
             .unwrap_or_else(|| "Dashboard".to_string());
 
         self.dashboard_names.push(name);
+        self.dashboard_paths.push(path_buf);
         self.dashboards
             .push(DashboardState::new(dashboard, project_id));
         Ok(())
@@ -237,6 +245,9 @@ impl App {
                         state.update_widget(&widget_id, widget_state);
                     }
                 }
+                AppMessage::DashboardFileChanged { path } => {
+                    self.reload_dashboard_from_path(&path);
+                }
             }
         }
     }
@@ -247,6 +258,45 @@ impl App {
             state.reset_all_to_loading();
         }
         self.fetch_all_widgets();
+    }
+
+    /// Reload a dashboard from a file path after it has been modified
+    fn reload_dashboard_from_path(&mut self, changed_path: &std::path::Path) {
+        // Find the dashboard index that corresponds to this file path
+        let dashboard_index = match self.dashboard_paths.iter().position(|p| p.as_path() == changed_path) {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        let project_id = self.dashboards[dashboard_index].project_id;
+
+        // Try to read and parse the updated YAML file
+        let content = match std::fs::read_to_string(changed_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to read dashboard {}: {}", changed_path.display(), e);
+                return;
+            }
+        };
+
+        let dashboard = match serde_yml::from_str::<Dashboard>(&content) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to parse dashboard {}: {}", changed_path.display(), e);
+                return;
+            }
+        };
+
+        // Update the display name from the new dashboard title
+        self.dashboard_names[dashboard_index] = dashboard.title.clone();
+
+        // Replace the dashboard state with a fresh one
+        self.dashboards[dashboard_index] = DashboardState::new(dashboard, project_id);
+
+        // Refetch widgets if this dashboard is currently active
+        if dashboard_index == self.active_dashboard_index {
+            self.fetch_all_widgets();
+        }
     }
 
     /// Navigate to an adjacent widget in the given direction
@@ -327,6 +377,83 @@ impl App {
     }
 }
 
+/// Spawn a file watcher thread that monitors dashboard directory for changes
+/// Debounces changes (200ms) and sends DashboardFileChanged messages to the app
+fn spawn_file_watcher(dashboards_dir: PathBuf, tx: mpsc::Sender<AppMessage>) {
+    use notify::{RecursiveMode, Result as NotifyResult, Watcher};
+    use std::time::Instant;
+
+    std::thread::spawn(move || {
+        let mut last_events = std::collections::HashMap::<PathBuf, Instant>::new();
+
+        // Create a channel for notify events
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+
+        // Create the watcher
+        let mut watcher =
+            match notify::recommended_watcher(move |res: NotifyResult<notify::Event>| {
+                let _ = notify_tx.send(res);
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("Failed to create file watcher: {}", e);
+                    return;
+                }
+            };
+
+        // Watch the dashboards directory (non-recursive)
+        if let Err(e) = watcher.watch(&dashboards_dir, RecursiveMode::NonRecursive) {
+            eprintln!("Failed to watch dashboards directory: {}", e);
+            return;
+        }
+
+        // Process watch events
+        for res in notify_rx {
+            let event = match res {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("File watcher error: {}", e);
+                    continue;
+                }
+            };
+
+            // Only handle modify/create events
+            if !matches!(
+                event.kind,
+                notify::EventKind::Modify(_) | notify::EventKind::Create(_)
+            ) {
+                continue;
+            }
+
+            for path in event.paths {
+                // Filter for YAML files only
+                let is_yaml = path
+                    .extension()
+                    .map(|ext| ext == "yml" || ext == "yaml")
+                    .unwrap_or(false);
+
+                if !is_yaml {
+                    continue;
+                }
+
+                // Canonicalize the path to match stored dashboard paths
+                let path = path.canonicalize().unwrap_or(path);
+
+                // Debounce: skip if less than 200ms since last event for this file
+                let now = Instant::now();
+                if let Some(last) = last_events.get(&path) {
+                    if now.duration_since(*last) < std::time::Duration::from_millis(200) {
+                        continue;
+                    }
+                }
+                last_events.insert(path.clone(), now);
+
+                let _ = tx.blocking_send(AppMessage::DashboardFileChanged { path });
+            }
+        }
+    });
+}
+
 /// Find dashboards directory, checking in order:
 /// 1. Explicit path from -d flag or HONEYBADGER_DASHBOARDS env
 /// 2. ./.hbtui/dashboards/ (project-local)
@@ -334,20 +461,21 @@ impl App {
 fn find_dashboards_path(explicit: Option<&str>) -> Option<PathBuf> {
     // If explicit path provided, use it (even if it doesn't exist - we'll error later)
     if let Some(path) = explicit {
-        return Some(PathBuf::from(path));
+        let p = PathBuf::from(path);
+        return Some(p.canonicalize().unwrap_or(p));
     }
 
     // Check project-local .hbtui/dashboards/
     let local = PathBuf::from(".hbtui/dashboards");
     if local.exists() {
-        return Some(local);
+        return Some(local.canonicalize().unwrap_or(local));
     }
 
     // Check user default ~/.hbtui/dashboards/
     if let Some(home) = std::env::var_os("HOME") {
         let user_default = PathBuf::from(home).join(".hbtui/dashboards");
         if user_default.exists() {
-            return Some(user_default);
+            return Some(user_default.canonicalize().unwrap_or(user_default));
         }
     }
 
@@ -392,6 +520,18 @@ async fn main() -> Result<()> {
 
     // Start fetching widget data
     app.fetch_all_widgets();
+
+    // Start file watcher for dashboard source files
+    if let Some(path) = &dashboards_path {
+        if path.is_dir() {
+            spawn_file_watcher(path.clone(), app.message_tx.clone());
+        } else if path.is_file() {
+            // Watch the parent directory of a single dashboard file
+            if let Some(parent) = path.parent() {
+                spawn_file_watcher(parent.to_path_buf(), app.message_tx.clone());
+            }
+        }
+    }
 
     // Setup panic hook BEFORE terminal init
     let original_hook = std::panic::take_hook();
@@ -607,4 +747,192 @@ fn render_dashboard_view(f: &mut Frame, app: &App) {
         .style(Style::default().fg(Color::Gray))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Helper to create a minimal valid YAML dashboard
+    fn create_test_dashboard(title: &str) -> String {
+        format!(
+            "title: {}\nwidgets: []\n",
+            title
+        )
+    }
+
+    /// Test 1: reload_dashboard_from_path - successful reload with title change
+    #[tokio::test]
+    async fn test_reload_dashboard_from_path_successful_reload() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let test_file = temp_dir.join("test_dashboard_reload.yml");
+
+        // Create initial dashboard file
+        let initial_yaml = create_test_dashboard("Original Title");
+        fs::write(&test_file, initial_yaml).expect("Failed to write initial dashboard");
+
+        // Create app and load the dashboard
+        let mut app = App::new("test-token".to_string(), "http://localhost".to_string());
+        app.load_dashboard(&test_file.to_string_lossy(), 123)
+            .expect("Failed to load dashboard");
+
+        // Verify initial state
+        assert_eq!(app.dashboards.len(), 1);
+        assert_eq!(app.dashboard_paths.len(), 1);
+        assert_eq!(app.dashboard_paths[0], test_file);
+
+        // Write updated YAML with new title
+        let updated_yaml = create_test_dashboard("Updated Title");
+        fs::write(&test_file, updated_yaml).expect("Failed to write updated dashboard");
+
+        // Call reload
+        app.reload_dashboard_from_path(&test_file);
+
+        // Verify dashboard was updated
+        assert_eq!(app.dashboards.len(), 1);
+        // The new dashboard should be in a Loading state (fresh from YAML)
+        assert!(app.dashboards[0].widgets.is_empty());
+
+        // Cleanup
+        let _ = fs::remove_file(&test_file);
+    }
+
+    /// Test 2: reload_dashboard_from_path - invalid YAML keeps old dashboard
+    #[tokio::test]
+    async fn test_reload_dashboard_from_path_invalid_yaml_keeps_old() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let test_file = temp_dir.join("test_dashboard_invalid.yml");
+
+        // Create initial valid dashboard
+        let initial_yaml = create_test_dashboard("Original Title");
+        fs::write(&test_file, &initial_yaml).expect("Failed to write initial dashboard");
+
+        // Create app and load the dashboard
+        let mut app = App::new("test-token".to_string(), "http://localhost".to_string());
+        app.load_dashboard(&test_file.to_string_lossy(), 123)
+            .expect("Failed to load dashboard");
+
+        let original_widget_count = app.dashboards[0].widgets.len();
+
+        // Write invalid YAML
+        let invalid_yaml = "title: [\ninvalid yaml: {\n";
+        fs::write(&test_file, invalid_yaml).expect("Failed to write invalid YAML");
+
+        // Call reload (should handle the error gracefully)
+        app.reload_dashboard_from_path(&test_file);
+
+        // Verify old dashboard is still intact
+        assert_eq!(app.dashboards.len(), 1);
+        assert_eq!(app.dashboards[0].widgets.len(), original_widget_count);
+
+        // Cleanup
+        let _ = fs::remove_file(&test_file);
+    }
+
+    /// Test 3: reload_dashboard_from_path - unknown path is no-op
+    #[tokio::test]
+    async fn test_reload_dashboard_from_path_unknown_path() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let known_file = temp_dir.join("test_dashboard_known.yml");
+        let unknown_file = temp_dir.join("test_dashboard_unknown.yml");
+
+        // Create and load a dashboard from known file
+        let yaml = create_test_dashboard("Original");
+        fs::write(&known_file, yaml).expect("Failed to write dashboard");
+
+        let mut app = App::new("test-token".to_string(), "http://localhost".to_string());
+        app.load_dashboard(&known_file.to_string_lossy(), 123)
+            .expect("Failed to load dashboard");
+
+        assert_eq!(app.dashboards.len(), 1);
+
+        // Try to reload from unknown path (should be no-op and not crash)
+        app.reload_dashboard_from_path(&unknown_file);
+
+        // Verify nothing changed
+        assert_eq!(app.dashboards.len(), 1);
+        assert_eq!(app.dashboard_paths[0], known_file);
+
+        // Cleanup
+        let _ = fs::remove_file(&known_file);
+    }
+
+    /// Test 4: reload_dashboard_from_path with widget in active dashboard triggers refetch
+    #[tokio::test]
+    async fn test_reload_dashboard_refetches_active_dashboard() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let test_file = temp_dir.join("test_dashboard_refetch.yml");
+
+        // Create dashboard with a widget
+        let yaml = r#"title: Test
+widgets:
+  - id: test-widget
+    type: insights
+    grid: { x: 0, y: 0, w: 6, h: 2 }
+    presentation:
+      title: Test Widget
+    config:
+      query: "SELECT 1"
+"#;
+        fs::write(&test_file, yaml).expect("Failed to write dashboard");
+
+        // Create app and load
+        let mut app = App::new("test-token".to_string(), "http://localhost".to_string());
+        app.load_dashboard(&test_file.to_string_lossy(), 123)
+            .expect("Failed to load dashboard");
+
+        // Mark the active dashboard index
+        assert_eq!(app.active_dashboard_index, 0);
+        assert_eq!(app.dashboards[0].widgets.len(), 1);
+
+        // Reload (should work without crashing)
+        app.reload_dashboard_from_path(&test_file);
+
+        // Dashboard should still have the widget, and it should be in Loading state
+        assert_eq!(app.dashboards[0].widgets.len(), 1);
+        assert!(matches!(
+            app.dashboards[0].widgets[0].state,
+            WidgetState::Loading
+        ));
+
+        // Cleanup
+        let _ = fs::remove_file(&test_file);
+    }
+
+    /// Test 5: reload_dashboard_from_path doesn't refetch inactive dashboard
+    #[tokio::test]
+    async fn test_reload_dashboard_does_not_refetch_inactive() {
+        let temp_dir = std::env::temp_dir().canonicalize().unwrap();
+        let file1 = temp_dir.join("test_dashboard_1.yml");
+        let file2 = temp_dir.join("test_dashboard_2.yml");
+
+        // Create two dashboard files
+        fs::write(&file1, create_test_dashboard("Dashboard 1"))
+            .expect("Failed to write dashboard 1");
+        fs::write(&file2, create_test_dashboard("Dashboard 2"))
+            .expect("Failed to write dashboard 2");
+
+        // Create app and load both dashboards
+        let mut app = App::new("test-token".to_string(), "http://localhost".to_string());
+        app.load_dashboard(&file1.to_string_lossy(), 123)
+            .expect("Failed to load dashboard 1");
+        app.load_dashboard(&file2.to_string_lossy(), 123)
+            .expect("Failed to load dashboard 2");
+
+        // Active dashboard is 0
+        assert_eq!(app.active_dashboard_index, 0);
+        assert_eq!(app.dashboards.len(), 2);
+
+        // Reload the inactive dashboard (index 1)
+        app.reload_dashboard_from_path(&file2);
+
+        // Both dashboards should still exist
+        assert_eq!(app.dashboards.len(), 2);
+        assert_eq!(app.active_dashboard_index, 0); // Active index unchanged
+
+        // Cleanup
+        let _ = fs::remove_file(&file1);
+        let _ = fs::remove_file(&file2);
+    }
 }
